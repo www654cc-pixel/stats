@@ -15,6 +15,21 @@ public protocol Portal_p: NSView {
     var name: String { get }
 }
 
+// Snapshot accessors used by the combined "overview" summary. Adopted by the
+// CPU / RAM / Sensors module portals so the combined view can read their latest
+// values without importing module-private types.
+public protocol CombinedCPUPortal: AnyObject {
+    var lastUsage: Double? { get }
+}
+public protocol CombinedRAMPortal: AnyObject {
+    var lastPressure: RAMPressure? { get }
+}
+public protocol CombinedSensorsPortal: AnyObject {
+    var lastPower: String? { get }
+    var lastMaxTemp: String? { get }
+    var lastMaxTempValue: Double? { get }
+}
+
 open class PortalWrapper: NSStackView, Portal_p {
     public var name: String
     private let header: PortalHeader

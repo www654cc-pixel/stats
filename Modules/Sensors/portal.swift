@@ -12,13 +12,18 @@
 import AppKit
 import Kit
 
-public class Portal: NSStackView, Portal_p {
+public class Portal: NSStackView, Portal_p, CombinedSensorsPortal {
     public var name: String
-    
+
     private var container: ScrollableStackView = ScrollableStackView()
-    
+
     private var list: [String: NSView] = [:]
-    
+
+    // latest snapshots, used by the combined overview summary
+    public private(set) var lastPower: String?
+    public private(set) var lastMaxTemp: String?
+    public private(set) var lastMaxTempValue: Double?
+
     private var unknownSensorsState: Bool {
         Store.shared.bool(key: "Sensors_unknown", defaultValue: false)
     }
@@ -83,6 +88,18 @@ public class Portal: NSStackView, Portal_p {
     }
     
     public func usageCallback(_ values: [Sensor_p]) {
+        let power = values.first(where: { $0.type == .power && $0.key == "PSTR" }) ?? values.first(where: { $0.type == .power })
+        self.lastPower = power?.formattedPopupValue
+
+        let temps = values.filter({ $0.type == .temperature && ($0.group == .CPU || $0.group == .GPU) })
+        if let hottest = temps.max(by: { $0.value < $1.value }) {
+            self.lastMaxTemp = hottest.formattedPopupValue
+            self.lastMaxTempValue = hottest.value
+        } else {
+            self.lastMaxTemp = nil
+            self.lastMaxTempValue = nil
+        }
+
         DispatchQueue.main.async(execute: {
             if self.window?.isVisible ?? false {
                 values.forEach { (s: Sensor_p) in

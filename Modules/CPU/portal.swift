@@ -12,11 +12,14 @@
 import Cocoa
 import Kit
 
-public class Portal: PortalWrapper {
+public class Portal: PortalWrapper, CombinedCPUPortal {
     private var circle: PieChartView? = nil
     private var columnChart: ColumnChartView? = nil
-    
+
     private var initialized: Bool = false
+
+    // latest total usage snapshot, used by the combined overview summary
+    public private(set) var lastUsage: Double?
     
     private var systemField: NSTextField? = nil
     private var userField: NSTextField? = nil
@@ -135,6 +138,7 @@ public class Portal: PortalWrapper {
     }
     
     internal func callback(_ value: CPU_Load) {
+        self.lastUsage = value.totalUsage
         DispatchQueue.main.async(execute: {
             if (self.window?.isVisible ?? false) || !self.initialized {
                 self.systemField?.stringValue = "\(Int(value.systemLoad.rounded(toPlaces: 2) * 100))%"

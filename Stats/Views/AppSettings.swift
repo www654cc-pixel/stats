@@ -38,6 +38,10 @@ class ApplicationSettings: NSStackView {
         get { Store.shared.bool(key: "CombinedModules_popup", defaultValue: true) }
         set { Store.shared.set(key: "CombinedModules_popup", value: newValue) }
     }
+    private var combinedModulesIcon: Bool {
+        get { Store.shared.bool(key: "CombinedModules_icon", defaultValue: false) }
+        set { Store.shared.set(key: "CombinedModules_icon", value: newValue) }
+    }
     
     private var systemWidgetsUpdatesState: Bool {
         get {
@@ -142,6 +146,10 @@ class ApplicationSettings: NSStackView {
             PreferencesRow(localizedString("Combined details"), component: switchView(
                 action: #selector(self.toggleCombinedModulesPopup),
                 state: self.combinedModulesPopup
+            )),
+            PreferencesRow(localizedString("Single icon"), component: switchView(
+                action: #selector(self.toggleCombinedModulesIcon),
+                state: self.combinedModulesIcon
             ))
         ])
         scrollView.stackView.addArrangedSubview(self.combinedModulesView!)
@@ -149,6 +157,7 @@ class ApplicationSettings: NSStackView {
         self.combinedModulesView?.setRowVisibility(2, newState: self.combinedModulesState)
         self.combinedModulesView?.setRowVisibility(3, newState: self.combinedModulesState)
         self.combinedModulesView?.setRowVisibility(4, newState: self.combinedModulesState)
+        self.combinedModulesView?.setRowVisibility(5, newState: self.combinedModulesState)
         
         self.remoteControlBtn = switchView(
             action: #selector(self.toggleRemoteControlState),
@@ -385,6 +394,11 @@ class ApplicationSettings: NSStackView {
     @objc private func toggleCombinedModulesPopup(_ sender: NSButton) {
         self.combinedModulesPopup = sender.state == NSControl.StateValue.on
         NotificationCenter.default.post(name: .combinedModulesPopup, object: nil, userInfo: nil)
+    }
+
+    @objc private func toggleCombinedModulesIcon(_ sender: NSButton) {
+        self.combinedModulesIcon = sender.state == NSControl.StateValue.on
+        NotificationCenter.default.post(name: .toggleOneView, object: nil, userInfo: nil)
     }
     
     @objc private func toggleMenuBarPosition(_ sender: NSButton) {

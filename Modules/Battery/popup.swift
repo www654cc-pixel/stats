@@ -417,9 +417,11 @@ internal class BatteryView: NSView {
         super.draw(dirtyRect)
         
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
-        
+
         let w: CGFloat = min(self.frame.width, 130)
         let h: CGFloat = min(self.frame.height, 60)
+        // avoid drawing degenerate (negative-size) paths when laid out very small
+        guard w > 8, h > 2 else { return }
         let x: CGFloat = (self.frame.width - w)/2
         let y: CGFloat = (self.frame.size.height - h) / 2
         let batteryFrame = NSBezierPath(roundedRect: NSRect(x: x+1, y: y+1, width: w-8, height: h-2), xRadius: 16, yRadius: 16)

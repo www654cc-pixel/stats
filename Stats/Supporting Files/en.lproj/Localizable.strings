@@ -158,6 +158,9 @@
 "Resume the Stats" = "Resume the Stats";
 "Combined modules" = "Combined modules";
 "Combined details" = "Combined details";
+"Single icon" = "Single icon";
+"Proxy" = "Proxy";
+"timeout" = "timeout";
 "Spacing" = "Spacing";
 "Choose file" = "Choose file";
 "Stress tests" = "Stress tests";

@@ -12,15 +12,18 @@
 import Cocoa
 import Kit
 
-public class Portal: PortalWrapper {
+public class Portal: PortalWrapper, CombinedRAMPortal {
     private var circle: PieChartView? = nil
     
     private var usedField: NSTextField? = nil
     private var freeField: NSTextField? = nil
     private var swapField: NSTextField? = nil
     private var pressureLevelField: NSTextField? = nil
-    
+
     private var initialized: Bool = false
+
+    // latest snapshot, used by the combined overview summary
+    public private(set) var lastPressure: RAMPressure?
     
     private var appColorState: SColor = .secondBlue
     private var appColor: NSColor { self.appColorState.additional as? NSColor ?? NSColor.systemRed }
@@ -98,6 +101,7 @@ public class Portal: PortalWrapper {
     }
     
     internal func callback(_ value: RAM_Usage) {
+        self.lastPressure = value.pressure.value
         DispatchQueue.main.async(execute: {
             if (self.window?.isVisible ?? false) || !self.initialized {
                 self.usedField?.stringValue = Units(bytes: Int64(value.used)).getReadableMemory(style: .memory)
