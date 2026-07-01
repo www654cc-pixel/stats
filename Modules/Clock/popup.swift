@@ -591,7 +591,7 @@ internal class ClockView: NSStackView {
     public var clock: Clock_t
 
     open override var intrinsicContentSize: CGSize {
-        return CGSize(width: NSView.noIntrinsicMetric, height: 50)
+        return CGSize(width: NSView.noIntrinsicMetric, height: 56)
     }
 
     private let cache = PopupCache<Clock_t>()
@@ -623,46 +623,62 @@ internal class ClockView: NSStackView {
         
         self.clockView.widthAnchor.constraint(equalToConstant: 34).isActive = true
         
-        let container: NSStackView = NSStackView()
-        container.orientation = .vertical
-        container.spacing = 2
-        container.distribution = .fillEqually
-        container.alignment = .left
+        let rightStack: NSStackView = NSStackView()
+        rightStack.orientation = .vertical
+        rightStack.spacing = 2
+        rightStack.distribution = .fill
+        rightStack.alignment = .width
+        
+        let topRow: NSStackView = NSStackView()
+        topRow.orientation = .horizontal
+        topRow.spacing = Constants.Popup.margins
+        topRow.distribution = .fill
+        topRow.alignment = .centerY
         
         self.nameField.font = NSFont.systemFont(ofSize: 11, weight: .medium)
         self.nameField.textColor = .tertiaryLabelColor
         self.nameField.stringValue = self.clock.name
+        self.nameField.lineBreakMode = .byTruncatingTail
         self.nameField.cell?.truncatesLastVisibleLine = true
-        
-        self.timeField.font = NSFont.systemFont(ofSize: 13, weight: .regular)
-        self.timeField.stringValue = clock.formatted()
-        self.timeField.cell?.truncatesLastVisibleLine = true
-        
-        container.addArrangedSubview(self.nameField)
-        container.addArrangedSubview(self.timeField)
-        container.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        
-        let details: NSStackView = NSStackView()
-        details.orientation = .vertical
-        details.spacing = 2
-        details.distribution = .fill
-        details.alignment = .right
+        self.nameField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         
         self.tzField.font = NSFont.systemFont(ofSize: 11, weight: .medium)
         self.tzField.textColor = .tertiaryLabelColor
         self.tzField.alignment = .right
+        self.tzField.lineBreakMode = .byTruncatingTail
+        self.tzField.cell?.truncatesLastVisibleLine = true
+        self.tzField.setContentCompressionResistancePriority(.required, for: .horizontal)
+        
+        topRow.addArrangedSubview(self.nameField)
+        topRow.addArrangedSubview(self.tzField)
+        
+        let bottomRow: NSStackView = NSStackView()
+        bottomRow.orientation = .horizontal
+        bottomRow.spacing = Constants.Popup.margins
+        bottomRow.distribution = .fill
+        bottomRow.alignment = .centerY
+        
+        self.timeField.font = NSFont.systemFont(ofSize: 13, weight: .regular)
+        self.timeField.stringValue = clock.formatted()
+        self.timeField.lineBreakMode = .byTruncatingTail
+        self.timeField.cell?.truncatesLastVisibleLine = true
+        self.timeField.setContentCompressionResistancePriority(.required, for: .horizontal)
         
         self.dateField.font = NSFont.systemFont(ofSize: 11, weight: .regular)
         self.dateField.textColor = .tertiaryLabelColor
         self.dateField.alignment = .right
+        self.dateField.lineBreakMode = .byTruncatingTail
+        self.dateField.cell?.truncatesLastVisibleLine = true
+        self.dateField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         
-        details.addArrangedSubview(self.tzField)
-        details.addArrangedSubview(self.dateField)
-        details.setContentHuggingPriority(.required, for: .horizontal)
+        bottomRow.addArrangedSubview(self.timeField)
+        bottomRow.addArrangedSubview(self.dateField)
+        
+        rightStack.addArrangedSubview(topRow)
+        rightStack.addArrangedSubview(bottomRow)
         
         self.addArrangedSubview(self.clockView)
-        self.addArrangedSubview(container)
-        self.addArrangedSubview(details)
+        self.addArrangedSubview(rightStack)
         
         self.update(clock)
     }

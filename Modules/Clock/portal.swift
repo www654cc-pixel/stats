@@ -82,8 +82,8 @@ public class Portal: NSStackView, Portal_p {
         let columns: Int
         switch count {
         case 1: columns = 1
-        case 2: columns = 2
-        case 3, 4: columns = 2
+        case 2, 3: columns = 1
+        case 4, 5: columns = 2
         default: columns = 3
         }
         let rows = (count + columns - 1) / columns
