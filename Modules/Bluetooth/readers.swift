@@ -44,6 +44,7 @@ internal class DevicesReader: Reader<[BLEDevice]>, CBCentralManagerDelegate, CBP
     
     init(callback: @escaping (T?) -> Void = {_ in }) {
         super.init(.bluetooth, callback: callback)
+        self.defaultInterval = 10
         self.manager = CBCentralManager(delegate: self, queue: nil)
     }
     

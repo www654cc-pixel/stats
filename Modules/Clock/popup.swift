@@ -46,8 +46,6 @@ internal class Popup: PopupWrapper {
     }
     
     internal func callback(_ list: [Clock_t]) {
-        defer { self.recalculateHeight() }
-        
         var sorted = list.sorted(by: { $0.popupIndex < $1.popupIndex })
         var views = self.subviews.filter{ $0 is ClockView }.compactMap{ $0 as? ClockView }
         
@@ -57,6 +55,8 @@ internal class Popup: PopupWrapper {
         }
         
         sorted = sorted.filter({ $0.popupState })
+        
+        let structureChanged = sorted.count != views.count || sorted.map({ $0.id }) != views.map({ $0.clock.id })
         
         if sorted.count < views.count && !views.isEmpty {
             views.forEach{ $0.removeFromSuperview() }
@@ -72,6 +72,9 @@ internal class Popup: PopupWrapper {
         }
         
         self.list = sorted
+        if structureChanged {
+            self.recalculateHeight()
+        }
     }
     
     private func recalculateHeight() {

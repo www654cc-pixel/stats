@@ -21,6 +21,10 @@ internal class ClockReader: Reader<Date> {
         get { self.queue.sync { self._offset } }
         set { self.queue.sync { self._offset = newValue } }
     }
+    private var _isSyncing: Bool = false
+    private var _lastSync: Date? = nil
+    private let minSyncInterval: TimeInterval = 300
+    private let ntpTimeout: TimeInterval = 1
     private var now: Date { Date().addingTimeInterval(self.offset) }
     
     private var ntpSync: Bool {
@@ -57,7 +61,14 @@ internal class ClockReader: Reader<Date> {
         let server = self.ntpServer
         self.queue.async { [weak self] in
             guard let self else { return }
-            guard let serverDate = self.requestTime(server: server) else { return }
+            if self._isSyncing { return }
+            if let last = self._lastSync, Date().timeIntervalSince(last) < self.minSyncInterval { return }
+            self._isSyncing = true
+            defer {
+                self._lastSync = Date()
+                self._isSyncing = false
+            }
+            guard let serverDate = self.requestTime(server: server, timeout: self.ntpTimeout) else { return }
             let newOffset = serverDate.timeIntervalSince(Date())
             self._offset = newOffset
             self.alignOffset = newOffset

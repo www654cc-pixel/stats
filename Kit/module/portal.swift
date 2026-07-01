@@ -47,6 +47,8 @@ public protocol CombinedRAMPortal: AnyObject {
 }
 public protocol CombinedSensorsPortal: AnyObject {
     var lastPower: String? { get }
+    var lastPowerValue: Double? { get }
+    var lastPowerUnit: String? { get }
     var lastMaxTemp: String? { get }
     var lastMaxTempValue: Double? { get }
 }

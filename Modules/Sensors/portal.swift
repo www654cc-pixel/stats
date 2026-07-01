@@ -21,6 +21,8 @@ public class Portal: NSStackView, Portal_p, CombinedSensorsPortal {
 
     // latest snapshots, used by the combined overview summary
     public private(set) var lastPower: String?
+    public private(set) var lastPowerValue: Double?
+    public private(set) var lastPowerUnit: String?
     public private(set) var lastMaxTemp: String?
     public private(set) var lastMaxTempValue: Double?
 
@@ -90,6 +92,8 @@ public class Portal: NSStackView, Portal_p, CombinedSensorsPortal {
     public func usageCallback(_ values: [Sensor_p]) {
         let power = values.first(where: { $0.type == .power && $0.key == "PSTR" }) ?? values.first(where: { $0.type == .power })
         self.lastPower = power?.formattedPopupValue
+        self.lastPowerValue = power.map { $0.localValue / 100 }
+        self.lastPowerUnit = power?.miniUnit
 
         let temps = values.filter({ $0.type == .temperature && ($0.group == .CPU || $0.group == .GPU) })
         if let hottest = temps.max(by: { $0.value < $1.value }) {

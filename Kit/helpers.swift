@@ -1631,6 +1631,11 @@ public class PreferencesSection: NSStackView {
         }
     }
     
+    public func delete(_ row: PreferencesRow) {
+        guard let id = row.identifier?.rawValue else { return }
+        self.delete(id)
+    }
+    
     public func contains(_ id: String) -> Bool {
         self.container.subviews.contains(where: { $0.identifier?.rawValue == id })
     }
@@ -1660,6 +1665,11 @@ public class PreferencesSection: NSStackView {
     public func findRow(_ id: String) -> PreferencesRow? {
         let rows: [PreferencesRow] = self.container.subviews.filter({ $0 is PreferencesRow }).compactMap({ $0 as? PreferencesRow })
         return rows.first(where: { $0.identifier?.rawValue == id })
+    }
+    
+    public func findRows(_ prefix: String) -> [PreferencesRow] {
+        let rows: [PreferencesRow] = self.container.subviews.filter({ $0 is PreferencesRow }).compactMap({ $0 as? PreferencesRow })
+        return rows.filter { $0.identifier?.rawValue.hasPrefix(prefix) ?? false }
     }
 }
 

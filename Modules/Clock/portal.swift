@@ -133,7 +133,25 @@ public class Portal: NSStackView, Portal_p {
     public func callback(_ list: [Clock_t]) {
         var sorted = list.sorted(by: { $0.popupIndex < $1.popupIndex })
         sorted = sorted.filter({ $0.popupState })
+
+        // avoid rebuilding the whole grid on every tick; only rebuild when the
+        // set of visible timezones changes. Otherwise update existing views.
+        let oldKeys = self.list.map { $0.id }
+        let newKeys = sorted.map { $0.id }
         self.list = sorted
-        self.rebuildGrid()
+
+        if oldKeys != newKeys || self.grid == nil {
+            self.rebuildGrid()
+        } else {
+            self.updateExistingViews()
+        }
+    }
+
+    private func updateExistingViews() {
+        guard let grid = self.grid else { return }
+        let views = grid.subviews.flatMap { ($0 as? NSStackView)?.subviews ?? [] }.compactMap { $0 as? ClockView }
+        for (i, clock) in self.list.enumerated() where i < views.count {
+            views[i].update(clock)
+        }
     }
 }

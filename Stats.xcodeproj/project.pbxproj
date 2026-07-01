@@ -20,6 +20,7 @@
 		5C2016432D36D0EF0049C788 /* Support.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C2016422D36D0EF0049C788 /* Support.swift */; };
 		5C21D80B296C7B81005BA16D /* CombinedView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C21D80A296C7B81005BA16D /* CombinedView.swift */; };
 		5C21D80C296C7B81005BA16D /* ProxyPortal.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C21D80D296C7B81005BA16D /* ProxyPortal.swift */; };
+		5C21D80E296C7B81005BA16D /* LauncherPortal.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C21D80F296C7B81005BA16D /* LauncherPortal.swift */; };
 		5C2229A329CCB3C400F00E69 /* Clock.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 5C22299D29CCB3C400F00E69 /* Clock.framework */; };
 		5C2229A429CCB3C400F00E69 /* Clock.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 5C22299D29CCB3C400F00E69 /* Clock.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		5C2229A929CCB41900F00E69 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C2229A829CCB41900F00E69 /* main.swift */; };
@@ -550,6 +551,7 @@
 		5C2016422D36D0EF0049C788 /* Support.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Support.swift; sourceTree = "<group>"; };
 		5C21D80A296C7B81005BA16D /* CombinedView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CombinedView.swift; sourceTree = "<group>"; };
 		5C21D80D296C7B81005BA16D /* ProxyPortal.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProxyPortal.swift; sourceTree = "<group>"; };
+		5C21D80F296C7B81005BA16D /* LauncherPortal.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LauncherPortal.swift; sourceTree = "<group>"; };
 		5C22299D29CCB3C400F00E69 /* Clock.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Clock.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		5C2229A829CCB41900F00E69 /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
 		5C2229AA29CCB53E00F00E69 /* config.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = config.plist; sourceTree = "<group>"; };
@@ -1207,6 +1209,7 @@
 				5C2016422D36D0EF0049C788 /* Support.swift */,
 				5C21D80A296C7B81005BA16D /* CombinedView.swift */,
 				5C21D80D296C7B81005BA16D /* ProxyPortal.swift */,
+				5C21D80F296C7B81005BA16D /* LauncherPortal.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -2215,6 +2218,7 @@
 				9A81C74D24499C7000825D92 /* AppSettings.swift in Sources */,
 				5C21D80B296C7B81005BA16D /* CombinedView.swift in Sources */,
 				5C21D80C296C7B81005BA16D /* ProxyPortal.swift in Sources */,
+				5C21D80E296C7B81005BA16D /* LauncherPortal.swift in Sources */,
 				9A83526F2889A03100791BAC /* Setup.swift in Sources */,
 				9AD33AC624BCD3EE007E8820 /* helpers.swift in Sources */,
 				5C2016432D36D0EF0049C788 /* Support.swift in Sources */,

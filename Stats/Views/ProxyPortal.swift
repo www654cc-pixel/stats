@@ -105,11 +105,11 @@ internal class ProxyPortal: NSStackView {
         self.refreshState()
         self.refreshSpeed()
         self.speedTimer?.invalidate()
-        self.speedTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+        self.speedTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
             self?.refreshSpeed()
         }
         self.testTimer?.invalidate()
-        self.testTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
+        self.testTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
             self?.refreshState()
         }
     }

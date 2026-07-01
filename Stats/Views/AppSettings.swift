@@ -65,6 +65,7 @@ class ApplicationSettings: NSStackView {
     private var remoteUpdatesBtn: NSSwitch?
     
     private var combinedModulesView: PreferencesSection?
+    private var launcherView: PreferencesSection?
     private var fanHelperView: PreferencesSection?
     private var remoteView: PreferencesSection?
     
@@ -158,6 +159,12 @@ class ApplicationSettings: NSStackView {
         self.combinedModulesView?.setRowVisibility(3, newState: self.combinedModulesState)
         self.combinedModulesView?.setRowVisibility(4, newState: self.combinedModulesState)
         self.combinedModulesView?.setRowVisibility(5, newState: self.combinedModulesState)
+        
+        self.launcherView = PreferencesSection(title: localizedString("Launchpad"), [
+            PreferencesRow(localizedString("Favorites"), component: buttonView(#selector(self.addLauncherFavorites), text: localizedString("Add")))
+        ])
+        scrollView.stackView.addArrangedSubview(self.launcherView!)
+        self.refreshLauncherFavoritesView()
         
         self.remoteControlBtn = switchView(
             action: #selector(self.toggleRemoteControlState),
@@ -376,7 +383,6 @@ class ApplicationSettings: NSStackView {
         self.combinedModulesView?.setRowVisibility(3, newState: self.combinedModulesState)
         self.combinedModulesView?.setRowVisibility(4, newState: self.combinedModulesState)
         self.combinedModulesView?.setRowVisibility(5, newState: self.combinedModulesState)
-        self.combinedModulesView?.setRowVisibility(6, newState: self.combinedModulesState)
         NotificationCenter.default.post(name: .toggleOneView, object: nil, userInfo: nil)
     }
     
@@ -384,6 +390,60 @@ class ApplicationSettings: NSStackView {
         guard let key = sender.representedObject as? String else { return }
         self.combinedModulesSpacing = key
         NotificationCenter.default.post(name: .moduleRearrange, object: nil, userInfo: nil)
+    }
+    
+    @objc private func addLauncherFavorites() {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = true
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = true
+        panel.allowedFileTypes = ["app"]
+        panel.directoryURL = URL(fileURLWithPath: "/Applications")
+        panel.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.modalPanelWindow)))
+        panel.begin { [weak self] result in
+            guard result.rawValue == NSApplication.ModalResponse.OK.rawValue else { return }
+            var current = Store.shared.array(key: "launcher_favorites", defaultValue: []) as? [String] ?? []
+            for url in panel.urls {
+                let path = url.path
+                if !current.contains(path) {
+                    current.append(path)
+                }
+            }
+            Store.shared.set(key: "launcher_favorites", value: current)
+            NotificationCenter.default.post(name: .launcherFavoritesChanged, object: nil)
+            self?.refreshLauncherFavoritesView()
+        }
+    }
+    
+    @objc private func removeLauncherFavorite(_ sender: NSButton) {
+        guard let path = sender.identifier?.rawValue else { return }
+        var current = Store.shared.array(key: "launcher_favorites", defaultValue: []) as? [String] ?? []
+        current.removeAll { $0 == path }
+        Store.shared.set(key: "launcher_favorites", value: current)
+        NotificationCenter.default.post(name: .launcherFavoritesChanged, object: nil)
+        self.refreshLauncherFavoritesView()
+    }
+    
+    private func refreshLauncherFavoritesView() {
+        guard let section = self.launcherView else { return }
+        let prefix = "launcher_favorite_"
+        let rows = section.findRows(prefix)
+        rows.forEach { section.delete($0) }
+        let paths = Store.shared.array(key: "launcher_favorites", defaultValue: []) as? [String] ?? []
+        for path in paths {
+            let url = URL(fileURLWithPath: path)
+            let name = url.deletingPathExtension().lastPathComponent
+            let removeBtn = NSButton()
+            removeBtn.title = "×"
+            removeBtn.bezelStyle = .rounded
+            removeBtn.identifier = NSUserInterfaceItemIdentifier(rawValue: prefix + path)
+            removeBtn.target = self
+            removeBtn.action = #selector(self.removeLauncherFavorite(_:))
+            let row = PreferencesRow(name, id: prefix + path, component: removeBtn)
+            section.add(row)
+        }
+        section.needsLayout = true
+        section.layoutSubtreeIfNeeded()
     }
     
     @objc private func toggleCombinedModulesSeparator(_ sender: NSButton) {

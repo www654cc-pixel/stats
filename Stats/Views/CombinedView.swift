@@ -16,6 +16,7 @@ internal class CombinedView: NSObject, NSGestureRecognizerDelegate {
     private var menuBarItem: NSStatusItem? = nil
     private var view: NSView = NSView(frame: NSRect(x: 0, y: 0, width: 0, height: Constants.Widget.height))
     private var popup: PopupWindow? = nil
+    private var powerTimer: Timer? = nil
 
     private var status: Bool {
         Store.shared.bool(key: "CombinedModules", defaultValue: false)
@@ -79,13 +80,11 @@ internal class CombinedView: NSObject, NSGestureRecognizerDelegate {
         })
         self.menuBarItem?.button?.toolTip = localizedString("Combined modules")
 
-        // single icon mode: one fixed icon, click always opens the overview popup
+        // single icon mode: show a live power mini-widget when Sensors is enabled,
+        // otherwise fall back to the fixed gauge icon.
         if self.singleIcon {
-            self.menuBarItem?.button?.image = self.icon()
-            self.menuBarItem?.length = 30
-            self.menuBarItem?.button?.target = self
-            self.menuBarItem?.button?.action = #selector(self.togglePopup)
-            self.menuBarItem?.button?.sendAction(on: [.leftMouseDown, .rightMouseDown])
+            self.setupSingleIconView()
+            self.activeModules.forEach { $0.menuBar.disable() }
             return
         }
 
@@ -124,12 +123,79 @@ internal class CombinedView: NSObject, NSGestureRecognizerDelegate {
                 w.item.onClick = nil
             }
         }
+        self.powerTimer?.invalidate()
+        self.powerTimer = nil
         if let item = self.menuBarItem {
             NSStatusBar.system.removeStatusItem(item)
         }
         self.menuBarItem = nil
     }
-    
+
+    private func setupSingleIconView() {
+        guard let portal = self.powerPortal(), portal.lastPowerValue != nil else {
+            self.menuBarItem?.button?.image = self.icon()
+            self.menuBarItem?.length = 30
+            self.menuBarItem?.button?.target = self
+            self.menuBarItem?.button?.action = #selector(self.togglePopup)
+            self.menuBarItem?.button?.sendAction(on: [.leftMouseDown, .rightMouseDown])
+            return
+        }
+
+        self.menuBarItem?.length = 36
+        self.menuBarItem?.button?.target = self
+        self.menuBarItem?.button?.action = #selector(self.togglePopup)
+        self.menuBarItem?.button?.sendAction(on: [.leftMouseDown, .rightMouseDown])
+
+        self.refreshPowerIcon()
+        self.powerTimer?.invalidate()
+        self.powerTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
+            self?.refreshPowerIcon()
+        }
+    }
+
+    private var lastPowerImageText: String = ""
+
+    private func refreshPowerIcon() {
+        guard let portal = self.powerPortal(), let value = portal.lastPowerValue else {
+            self.menuBarItem?.button?.image = self.icon()
+            return
+        }
+        let displayValue = value * 100
+        let text = "\(Int(displayValue.rounded()))\(portal.lastPowerUnit ?? "W")"
+        guard text != self.lastPowerImageText else { return }
+        self.lastPowerImageText = text
+        self.menuBarItem?.button?.image = self.powerImage(value: displayValue, unit: portal.lastPowerUnit ?? "W")
+    }
+
+    private func powerImage(value: Double, unit: String) -> NSImage {
+        let text = "\(Int(value.rounded()))\(unit)"
+        let size = NSSize(width: 36, height: Constants.Widget.height)
+        let image = NSImage(size: size)
+        image.lockFocus()
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 11, weight: .medium),
+            .foregroundColor: self.color(for: value)
+        ]
+        let str = NSAttributedString(string: text, attributes: attrs)
+        let textSize = str.size()
+        let point = NSPoint(x: (size.width - textSize.width) / 2, y: (size.height - textSize.height) / 2)
+        str.draw(at: point)
+        image.unlockFocus()
+        image.isTemplate = false
+        return image
+    }
+
+    private func color(for value: Double) -> NSColor {
+        if value >= 50 { return NSColor.systemRed }
+        if value >= 25 { return NSColor.systemOrange }
+        return NSColor.labelColor
+    }
+
+    private func powerPortal() -> CombinedSensorsPortal? {
+        guard let m = modules.first(where: { $0.name == "Sensors" && $0.enabled }) else { return nil }
+        return m.portal as? CombinedSensorsPortal
+    }
+
     private func icon() -> NSImage {
         let config = NSImage.SymbolConfiguration(pointSize: 15, weight: .regular)
         for name in ["gauge.with.dots.needle.bottom.50percent", "gauge", "chart.bar.xaxis"] {
@@ -245,20 +311,26 @@ internal class CombinedView: NSObject, NSGestureRecognizerDelegate {
               state,
               let module = self.activeModules.first(where: { $0.name == name }) else { return }
         
-        module.menuBar.widgets.forEach { w in
-            w.item.onClick = {
-                if let window = w.item.window {
-                    NotificationCenter.default.post(name: .togglePopup, object: nil, userInfo: [
-                        "module": module.name,
-                        "widget": w.type,
-                        "origin": window.frame.origin,
-                        "center": window.frame.width/2
-                    ])
+        if self.singleIcon {
+            module.menuBar.disable()
+        } else {
+            module.menuBar.widgets.forEach { w in
+                w.item.onClick = {
+                    if let window = w.item.window {
+                        NotificationCenter.default.post(name: .togglePopup, object: nil, userInfo: [
+                            "module": module.name,
+                            "widget": w.type,
+                            "origin": window.frame.origin,
+                            "center": window.frame.width/2
+                        ])
+                    }
                 }
             }
         }
     }
 }
+
+// MARK: - Overview popup
 
 private class Popup: NSStackView, Popup_p {
     fileprivate var keyboardShortcut: [UInt16] = []
@@ -266,6 +338,7 @@ private class Popup: NSStackView, Popup_p {
 
     private let summary: SummaryView = SummaryView()
     private let proxy: ProxyPortal = ProxyPortal()
+    private let launcher: LauncherPortal = LauncherPortal()
     private var refreshTimer: Timer?
 
     init() {
@@ -281,6 +354,10 @@ private class Popup: NSStackView, Popup_p {
         self.proxy.onResize = { [weak self] in
             guard let self = self else { return }
             self.proxy.isHidden = !self.proxy.reachable
+            self.recomputeHeight()
+        }
+        self.launcher.onResize = { [weak self] in
+            guard let self = self else { return }
             self.recomputeHeight()
         }
 
@@ -381,6 +458,10 @@ private class Popup: NSStackView, Popup_p {
         self.proxy.setWidth(width)
         self.proxy.isHidden = !self.proxy.reachable
         self.addArrangedSubview(self.proxy)
+
+        // launcher panel for user-selected apps, full width below the proxy section
+        self.launcher.setWidth(width)
+        self.addArrangedSubview(self.launcher)
 
         self.applySize(width: width)
     }
