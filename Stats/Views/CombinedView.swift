@@ -322,10 +322,12 @@ private class Popup: NSStackView, Popup_p {
 
         let spacing = Constants.Popup.spacing
         let portals: [Portal_p] = modules.filter({ $0.enabled && $0.portal != nil }).compactMap({ $0.portal })
+        let widePortals = portals.filter { $0.isWide }
+        let normalPortals = portals.filter { !$0.isWide }
 
         // dashboard mode lays the portals out in a wide multi-column grid
         let dashboard = Store.shared.bool(key: "CombinedModules_icon", defaultValue: false)
-        let columns = (dashboard && portals.count > 1) ? (portals.count > 4 ? 3 : 2) : 1
+        let columns = (dashboard && normalPortals.count > 1) ? (normalPortals.count > 4 ? 3 : 2) : 1
         let width = CGFloat(columns) * Constants.Popup.width + CGFloat(columns - 1) * spacing
 
         // overview summary on top, shown when any of the metric-providing modules is enabled
@@ -336,14 +338,14 @@ private class Popup: NSStackView, Popup_p {
         }
 
         if columns == 1 {
-            portals.forEach { self.addArrangedSubview($0) }
+            normalPortals.forEach { self.addArrangedSubview($0) }
         } else {
             let grid = NSGridView()
             grid.rowSpacing = spacing
             grid.columnSpacing = spacing
 
             var row: [NSView] = []
-            portals.forEach { p in
+            normalPortals.forEach { p in
                 row.append(p)
                 if row.count == columns {
                     grid.addRow(with: row)
@@ -363,6 +365,16 @@ private class Popup: NSStackView, Popup_p {
                 grid.row(at: r).yPlacement = .fill
             }
             self.addArrangedSubview(grid)
+        }
+
+        // wide portals (e.g. Clock) span the full width below the grid
+        widePortals.forEach {
+            $0.onResize = { [weak self] in
+                guard let self = self else { return }
+                self.applySize(width: self.frame.width)
+            }
+            $0.setWideWidth(width)
+            self.addArrangedSubview($0)
         }
 
         // proxy status section (mihomo), full width below the grid; hides itself when unreachable

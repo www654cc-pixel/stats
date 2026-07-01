@@ -13,6 +13,27 @@ import Cocoa
 
 public protocol Portal_p: NSView {
     var name: String { get }
+    // portals that benefit from more horizontal space (e.g. Clock) can opt in.
+    // Declared as a protocol requirement (not just an extension default) so
+    // overrides dispatch correctly through the `Portal_p` existential type —
+    // extension-only members use static dispatch and would always resolve to
+    // the default, ignoring conforming types' overrides.
+    var isWide: Bool { get }
+    // called by the combined overview with the full panel width; wide portals
+    // that want a reliable, explicit stretch should override this.
+    func setWideWidth(_ width: CGFloat)
+    // called by the portal when its intrinsic size changes (e.g. a grid
+    // reflows); the combined overview uses this to recompute the popup height.
+    var onResize: (() -> Void)? { get set }
+}
+
+public extension Portal_p {
+    var isWide: Bool { false }
+    func setWideWidth(_ width: CGFloat) {}
+    var onResize: (() -> Void)? {
+        get { nil }
+        set { }
+    }
 }
 
 // Snapshot accessors used by the combined "overview" summary. Adopted by the

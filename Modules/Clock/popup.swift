@@ -586,24 +586,24 @@ private class CalendarItemView: NSView {
 
 internal class ClockView: NSStackView {
     public var clock: Clock_t
-    
+
     open override var intrinsicContentSize: CGSize {
-        return CGSize(width: self.bounds.width, height: self.bounds.height)
+        return CGSize(width: NSView.noIntrinsicMetric, height: 50)
     }
-    
+
     private let cache = PopupCache<Clock_t>()
-    
+
     private let clockView: ClockChart = ClockChart(frame: CGRect(x: 0, y: 0, width: 34, height: 34))
     private let nameField: NSTextField = TextView()
     private let timeField: NSTextField = TextView()
     private let tzField: NSTextField = TextView()
     private let dateField: NSTextField = TextView()
-    
+
     init(width: CGFloat, clock: Clock_t) {
         self.clock = clock
-        
+
         super.init(frame: NSRect(x: 0, y: 0, width: width, height: 50))
-        
+
         self.orientation = .horizontal
         self.distribution = .fill
         self.spacing = Constants.Popup.margins
@@ -642,7 +642,7 @@ internal class ClockView: NSStackView {
         let details: NSStackView = NSStackView()
         details.orientation = .vertical
         details.spacing = 2
-        details.distribution = .fillEqually
+        details.distribution = .fill
         details.alignment = .right
         
         self.tzField.font = NSFont.systemFont(ofSize: 11, weight: .medium)
@@ -671,7 +671,13 @@ internal class ClockView: NSStackView {
     override func updateLayer() {
         self.layer?.backgroundColor = (isDarkMode ? NSColor(red: 17/255, green: 17/255, blue: 17/255, alpha: 0.25) : NSColor(red: 245/255, green: 245/255, blue: 245/255, alpha: 1)).cgColor
     }
-    
+
+    // width is intentionally left to the parent stack view; the .width
+    // alignment of the portal's scrollable stack view pins every row to the
+    // visible width (already accounting for the vertical scroller when present).
+    public func setWidth(_ width: CGFloat) {
+    }
+
     public func update(_ newClock: Clock_t) {
         if self.clock.tz != newClock.tz || self.clock.name != newClock.name {
             self.clock = newClock
