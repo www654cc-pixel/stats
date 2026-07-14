@@ -25,6 +25,7 @@ public class Portal: NSStackView, Portal_p, CombinedSensorsPortal {
     public private(set) var lastPowerUnit: String?
     public private(set) var lastMaxTemp: String?
     public private(set) var lastMaxTempValue: Double?
+    public private(set) var lastPowerFlow: PowerFlowReading?
 
     private var unknownSensorsState: Bool {
         Store.shared.bool(key: "Sensors_unknown", defaultValue: false)
@@ -94,6 +95,23 @@ public class Portal: NSStackView, Portal_p, CombinedSensorsPortal {
         self.lastPower = power?.formattedPopupValue
         self.lastPowerValue = power.map { $0.localValue / 100 }
         self.lastPowerUnit = power?.miniUnit
+
+        var flow = PowerFlowReading()
+        for s in values where s.type == .power {
+            switch s.key {
+            case "PSTR": flow.systemTotal = s.value
+            case "PDTR": flow.dcIn = s.value
+            case "PBLR": flow.display = s.value
+            case "PP0b": flow.cpuRail = s.value
+            case "PP1b": flow.gpuRail = s.value
+            case "CPU Power": flow.cpu = s.value
+            case "GPU Power": flow.gpu = s.value
+            case "ANE Power": flow.ane = s.value
+            case "RAM Power": flow.ram = s.value
+            default: break
+            }
+        }
+        self.lastPowerFlow = flow
 
         let temps = values.filter({ $0.type == .temperature && ($0.group == .CPU || $0.group == .GPU) })
         if let hottest = temps.max(by: { $0.value < $1.value }) {

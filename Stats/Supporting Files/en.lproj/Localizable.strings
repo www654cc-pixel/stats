@@ -160,6 +160,11 @@
 "Combined details" = "Combined details";
 "Single icon" = "Single icon";
 "Proxy" = "Proxy";
+"Power flow" = "Power flow";
+"CPU Rail" = "CPU Rail";
+"GPU Rail" = "GPU Rail";
+"High power" = "High power";
+"Others" = "Others";
 "timeout" = "timeout";
 "Spacing" = "Spacing";
 "Choose file" = "Choose file";

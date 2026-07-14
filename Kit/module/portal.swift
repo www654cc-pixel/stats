@@ -51,6 +51,23 @@ public protocol CombinedSensorsPortal: AnyObject {
     var lastPowerUnit: String? { get }
     var lastMaxTemp: String? { get }
     var lastMaxTempValue: Double? { get }
+    var lastPowerFlow: PowerFlowReading? { get }
+}
+
+// Latest power-rail readings (in watts) published by the Sensors portal for
+// the combined overview's power-flow (sankey) card.
+public struct PowerFlowReading {
+    public var systemTotal: Double?  // PSTR: whole-system consumption
+    public var dcIn: Double?         // PDTR: power drawn from the adapter
+    public var cpu: Double?          // IOReport energy model (dead on M5)
+    public var gpu: Double?
+    public var ane: Double?
+    public var ram: Double?
+    public var display: Double?      // PBLR: display backlight rail
+    public var cpuRail: Double?      // PP0b: CPU cluster supply rail (SMC)
+    public var gpuRail: Double?      // PP1b: GPU supply rail (SMC)
+
+    public init() {}
 }
 
 open class PortalWrapper: NSStackView, Portal_p {

@@ -552,6 +552,9 @@ internal let SensorsList: [Sensor] = [
     Sensor(key: "PCGM", name: "Intel GPU (IMON)", group: .GPU, type: .power, platforms: Platform.all),
     
     Sensor(key: "PC3C", name: "RAM", group: .sensor, type: .power, platforms: Platform.all),
+    Sensor(key: "PP0b", name: "CPU Rail", group: .CPU, type: .power, platforms: Platform.all),
+    Sensor(key: "PP1b", name: "GPU Rail", group: .GPU, type: .power, platforms: Platform.all),
+    Sensor(key: "PBLR", name: "Display", group: .sensor, type: .power, platforms: Platform.all),
     Sensor(key: "PPBR", name: "Battery", group: .sensor, type: .power, platforms: Platform.all),
     Sensor(key: "PDTR", name: "DC In", group: .sensor, type: .power, platforms: Platform.all),
     Sensor(key: "PMTR", name: "Memory Total", group: .sensor, type: .power, platforms: Platform.all),

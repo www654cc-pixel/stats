@@ -418,6 +418,11 @@
 "Temperature" = "温度";
 "Power adapter" = "电源适配器";
 "Power" = "功率";
+"Power flow" = "电源流向";
+"CPU Rail" = "CPU 供电轨";
+"GPU Rail" = "GPU 供电轨";
+"High power" = "高功耗";
+"Others" = "其他";
 "Is charging" = "充电中";
 "Time to discharge" = "电池剩余时间";
 "Time to charge" = "充电所需时间";

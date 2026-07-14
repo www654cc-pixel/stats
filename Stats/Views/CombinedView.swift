@@ -346,6 +346,7 @@ private class Popup: NSStackView, Popup_p {
     fileprivate var sizeCallback: ((NSSize) -> Void)? = nil
 
     private let summary: SummaryView = SummaryView()
+    private let power: PowerFlowPortal = PowerFlowPortal()
     private let proxy: ProxyPortal = ProxyPortal()
     private let launcher: LauncherPortal = LauncherPortal()
     private var refreshTimer: Timer?
@@ -360,6 +361,9 @@ private class Popup: NSStackView, Popup_p {
         self.alignment = .width
         self.spacing = Constants.Popup.spacing
 
+        self.power.onResize = { [weak self] in
+            self?.recomputeHeight()
+        }
         self.proxy.onResize = { [weak self] in
             guard let self = self else { return }
             self.proxy.isHidden = !self.proxy.reachable
@@ -391,11 +395,13 @@ private class Popup: NSStackView, Popup_p {
         self.refreshTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             self?.summary.refresh()
         }
+        self.power.start()
         self.proxy.start()
     }
     fileprivate func disappear() {
         self.refreshTimer?.invalidate()
         self.refreshTimer = nil
+        self.power.stop()
         self.proxy.stop()
     }
     fileprivate func setKeyboardShortcut(_ binding: [UInt16]) {
@@ -452,6 +458,11 @@ private class Popup: NSStackView, Popup_p {
             }
             self.addArrangedSubview(grid)
         }
+
+        // power-flow (sankey) card spans the full width right below the grid
+        self.power.setWidth(width)
+        self.power.isHidden = !self.power.available
+        self.addArrangedSubview(self.power)
 
         // wide portals (e.g. Clock) span the full width below the grid
         widePortals.forEach {
