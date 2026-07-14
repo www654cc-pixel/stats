@@ -150,11 +150,7 @@ internal class CombinedView: NSObject, NSGestureRecognizerDelegate {
         self.refreshPowerIcon()
         self.powerTimer?.invalidate()
         self.powerTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
-            guard let self = self else { return }
-            // PowerFlowPortal already refreshes the same data while the overview
-            // popup is open — skip the redundant icon update to save CPU.
-            guard !self.popupVisible else { return }
-            self.refreshPowerIcon()
+            self?.refreshPowerIcon()
         }
     }
 
