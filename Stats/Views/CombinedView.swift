@@ -164,31 +164,40 @@ internal class CombinedView: NSObject, NSGestureRecognizerDelegate {
         let text = "\(Int(displayValue.rounded()))\(portal.lastPowerUnit ?? "W")"
         guard text != self.lastPowerImageText else { return }
         self.lastPowerImageText = text
-        self.menuBarItem?.button?.image = self.powerImage(value: displayValue, unit: portal.lastPowerUnit ?? "W")
+        let image = self.powerImage(value: displayValue, unit: portal.lastPowerUnit ?? "W")
+        // template images get an implicit cross-fade on NSStatusBarButton;
+        // disable it so updates are instant instead of visibly lagging
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        self.menuBarItem?.button?.image = image
+        CATransaction.commit()
     }
 
     private func powerImage(value: Double, unit: String) -> NSImage {
         let text = "\(Int(value.rounded()))\(unit)"
         let size = NSSize(width: 36, height: Constants.Widget.height)
         let image = NSImage(size: size)
+        // warning colors are baked in; normal state renders as a template mask
+        // so the menu bar tints it to match the actual backdrop (light/dark)
+        let warningColor = self.color(for: value)
         image.lockFocus()
         let attrs: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: 11, weight: .medium),
-            .foregroundColor: self.color(for: value)
+            .foregroundColor: warningColor ?? NSColor.black
         ]
         let str = NSAttributedString(string: text, attributes: attrs)
         let textSize = str.size()
         let point = NSPoint(x: (size.width - textSize.width) / 2, y: (size.height - textSize.height) / 2)
         str.draw(at: point)
         image.unlockFocus()
-        image.isTemplate = false
+        image.isTemplate = warningColor == nil
         return image
     }
 
-    private func color(for value: Double) -> NSColor {
+    private func color(for value: Double) -> NSColor? {
         if value >= 50 { return NSColor.systemRed }
         if value >= 25 { return NSColor.systemOrange }
-        return NSColor.labelColor
+        return nil
     }
 
     private func powerPortal() -> CombinedSensorsPortal? {
