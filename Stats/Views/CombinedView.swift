@@ -345,8 +345,9 @@ private class Popup: NSStackView, Popup_p {
     fileprivate var keyboardShortcut: [UInt16] = []
     fileprivate var sizeCallback: ((NSSize) -> Void)? = nil
 
-    private let summary: SummaryView = SummaryView()
     private let power: PowerFlowPortal = PowerFlowPortal()
+    private let tiles: MetricTilesGrid = MetricTilesGrid()
+    private let clockRow: ClockRow = ClockRow()
     private let proxy: ProxyPortal = ProxyPortal()
     private let launcher: LauncherPortal = LauncherPortal()
     private var refreshTimer: Timer?
@@ -390,10 +391,12 @@ private class Popup: NSStackView, Popup_p {
 
     fileprivate func settings() -> NSView? { return nil }
     fileprivate func appear() {
-        self.summary.refresh()
+        self.tiles.refresh()
+        self.clockRow.refresh()
         self.refreshTimer?.invalidate()
         self.refreshTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
-            self?.summary.refresh()
+            self?.tiles.refresh()
+            self?.clockRow.refresh()
         }
         self.power.start()
         self.proxy.start()
@@ -409,35 +412,42 @@ private class Popup: NSStackView, Popup_p {
         Store.shared.set(key: "CombinedModules_popup_keyboardShortcut", value: binding)
     }
 
+    // modules whose data is shown by the unified cards (hero + tiles + clock row),
+    // so their stock portals are not added to the panel
+    static private let coveredModules: [String] = ["CPU", "GPU", "RAM", "Disk", "Network", "Sensors", "Battery", "Clock"]
+
     @objc private func reinit() {
         self.subviews.forEach({ $0.removeFromSuperview() })
 
         let spacing = Constants.Popup.spacing
-        let portals: [Portal_p] = modules.filter({ $0.enabled && $0.portal != nil }).compactMap({ $0.portal })
-        let widePortals = portals.filter { $0.isWide }
-        let normalPortals = portals.filter { !$0.isWide }
-
-        // dashboard mode lays the portals out in a wide multi-column grid
+        // dashboard (single icon) mode gets the wide three-column layout,
+        // the classic combined popup a narrower two-column one
         let dashboard = Store.shared.bool(key: "CombinedModules_icon", defaultValue: false)
-        let columns = (dashboard && normalPortals.count > 1) ? (normalPortals.count > 4 ? 3 : 2) : 1
+        let columns = dashboard ? 3 : 2
         let width = CGFloat(columns) * Constants.Popup.width + CGFloat(columns - 1) * spacing
 
-        // overview summary on top, shown when any of the metric-providing modules is enabled
-        self.summary.refresh()
-        if SummaryView.isAvailable {
-            self.summary.setWidth(width)
-            self.addArrangedSubview(self.summary)
+        // power-flow (sankey) hero card on top
+        self.power.setWidth(width)
+        self.power.isHidden = !self.power.available
+        self.addArrangedSubview(self.power)
+
+        // uniform metric tiles for the core modules
+        self.tiles.rebuild(width: width)
+        if !self.tiles.isEmpty {
+            self.tiles.refresh()
+            self.addArrangedSubview(self.tiles)
         }
 
-        if columns == 1 {
-            normalPortals.forEach { self.addArrangedSubview($0) }
-        } else {
+        // stock portals only for modules the unified cards don't cover (e.g. Bluetooth)
+        let fallback: [Portal_p] = modules
+            .filter({ $0.enabled && $0.portal != nil && !Popup.coveredModules.contains($0.name) })
+            .compactMap({ $0.portal })
+        if !fallback.isEmpty {
             let grid = NSGridView()
             grid.rowSpacing = spacing
             grid.columnSpacing = spacing
-
             var row: [NSView] = []
-            normalPortals.forEach { p in
+            fallback.forEach { p in
                 row.append(p)
                 if row.count == columns {
                     grid.addRow(with: row)
@@ -449,7 +459,7 @@ private class Popup: NSStackView, Popup_p {
                 grid.addRow(with: row)
             }
             for i in 0..<columns {
-                grid.column(at: i).width = Constants.Popup.width
+                grid.column(at: i).width = (width - CGFloat(columns - 1) * spacing) / CGFloat(columns)
                 grid.column(at: i).xPlacement = .fill
             }
             for r in 0..<grid.numberOfRows {
@@ -459,27 +469,16 @@ private class Popup: NSStackView, Popup_p {
             self.addArrangedSubview(grid)
         }
 
-        // power-flow (sankey) card spans the full width right below the grid
-        self.power.setWidth(width)
-        self.power.isHidden = !self.power.available
-        self.addArrangedSubview(self.power)
+        // single-line world clock row
+        self.clockRow.refresh()
+        self.addArrangedSubview(self.clockRow)
 
-        // wide portals (e.g. Clock) span the full width below the grid
-        widePortals.forEach {
-            $0.onResize = { [weak self] in
-                guard let self = self else { return }
-                self.applySize(width: self.frame.width)
-            }
-            $0.setWideWidth(width)
-            self.addArrangedSubview($0)
-        }
-
-        // proxy status section (mihomo), full width below the grid; hides itself when unreachable
+        // proxy status (mihomo), collapsed to one row; hides itself when unreachable
         self.proxy.setWidth(width)
         self.proxy.isHidden = !self.proxy.reachable
         self.addArrangedSubview(self.proxy)
 
-        // launcher panel for user-selected apps, full width below the proxy section
+        // launcher: one row of app icons
         self.launcher.setWidth(width)
         self.addArrangedSubview(self.launcher)
 
@@ -499,134 +498,89 @@ private class Popup: NSStackView, Popup_p {
     }
 }
 
-// MARK: - Overview summary
+// MARK: - Clock row
 
-private class SummaryView: NSStackView {
-    static let height: CGFloat = 52
+// single-line world clock: "北京 07:04   莫斯科 07:04   墨西哥城 22:04 −1d"
+private class ClockRow: NSStackView {
+    static let height: CGFloat = 30
 
-    // the summary is relevant only when at least one metric-providing module is enabled
-    static var isAvailable: Bool {
-        modules.contains(where: { ["CPU", "RAM", "Sensors"].contains($0.name) && $0.enabled })
-    }
-
-    private let powerTile = SummaryTile(title: localizedString("Power"))
-    private let cpuTile = SummaryTile(title: localizedString("CPU"))
-    private let pressureTile = SummaryTile(title: localizedString("Memory pressure"))
-    private let tempTile = SummaryTile(title: localizedString("Temperature"))
-
-    private var widthConstraint: NSLayoutConstraint?
+    private var entries: [(name: NSTextField, time: NSTextField, delta: NSTextField)] = []
+    private var names: [String] = []
 
     init() {
-        super.init(frame: NSRect(x: 0, y: 0, width: Constants.Popup.width, height: SummaryView.height))
+        super.init(frame: .zero)
+
+        self.wantsLayer = true
+        self.applyCardStyle()
 
         self.orientation = .horizontal
-        self.distribution = .fillEqually
-        self.spacing = Constants.Popup.spacing
-        self.heightAnchor.constraint(equalToConstant: SummaryView.height).isActive = true
-        self.widthConstraint = self.widthAnchor.constraint(equalToConstant: Constants.Popup.width)
-        self.widthConstraint?.isActive = true
-
-        [self.powerTile, self.cpuTile, self.pressureTile, self.tempTile].forEach { self.addArrangedSubview($0) }
+        self.alignment = .centerY
+        self.distribution = .fill
+        self.spacing = 16
+        self.edgeInsets = NSEdgeInsets(top: 0, left: 10, bottom: 0, right: 10)
+        self.heightAnchor.constraint(equalToConstant: ClockRow.height).isActive = true
     }
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
     }
 
-    func setWidth(_ width: CGFloat) {
-        self.widthConstraint?.constant = width
-        self.setFrameSize(NSSize(width: width, height: SummaryView.height))
+    public override func updateLayer() {
+        self.applyCardStyle()
     }
 
-    private func thresholdColor(_ value: Double, warn: Double, critical: Double) -> NSColor {
-        if value >= critical { return NSColor.systemRed }
-        if value >= warn { return NSColor.systemOrange }
-        return NSColor.labelColor
-    }
-
-    private func portal<T>(_ name: String, as type: T.Type) -> T? {
-        guard let m = modules.first(where: { $0.name == name && $0.enabled }) else { return nil }
-        return m.portal as? T
+    private func portal() -> CombinedClockPortal? {
+        guard let m = modules.first(where: { $0.name == "Clock" && $0.enabled }) else { return nil }
+        return m.portal as? CombinedClockPortal
     }
 
     func refresh() {
-        // CPU usage
-        if let p = self.portal("CPU", as: CombinedCPUPortal.self), let usage = p.lastUsage {
-            let percent = Double(Int(usage.rounded(toPlaces: 2) * 100))
-            self.cpuTile.set(value: "\(Int(percent))%", color: self.thresholdColor(percent, warn: 60, critical: 85))
-            self.cpuTile.isHidden = false
-        } else {
-            self.cpuTile.isHidden = true
+        guard let readings = self.portal()?.clockReadings, !readings.isEmpty else {
+            self.isHidden = true
+            return
         }
+        self.isHidden = false
 
-        // Memory pressure
-        if let p = self.portal("RAM", as: CombinedRAMPortal.self), let level = p.lastPressure {
-            self.pressureTile.set(value: level.rawValue.capitalized, color: level.pressureColor())
-            self.pressureTile.isHidden = false
-        } else {
-            self.pressureTile.isHidden = true
+        if readings.map({ $0.name }) != self.names {
+            self.rebuild(readings)
         }
-
-        // Power & max temperature from the Sensors module
-        let sensors = self.portal("Sensors", as: CombinedSensorsPortal.self)
-        if let power = sensors?.lastPower {
-            self.powerTile.set(value: power, color: NSColor.labelColor)
-            self.powerTile.isHidden = false
-        } else {
-            self.powerTile.isHidden = true
-        }
-        if let temp = sensors?.lastMaxTemp {
-            let raw = sensors?.lastMaxTempValue ?? 0
-            self.tempTile.set(value: temp, color: self.thresholdColor(raw, warn: 75, critical: 90))
-            self.tempTile.isHidden = false
-        } else {
-            self.tempTile.isHidden = true
+        for (i, r) in readings.enumerated() where i < self.entries.count {
+            self.entries[i].time.stringValue = r.time
+            self.entries[i].delta.stringValue = r.dayDelta == 0 ? "" : String(format: "%+dd", r.dayDelta)
         }
     }
-}
 
-private class SummaryTile: NSStackView {
-    private let valueField: NSTextField
+    private func rebuild(_ readings: [ClockReading]) {
+        self.subviews.forEach { $0.removeFromSuperview() }
+        self.entries = []
+        self.names = readings.map { $0.name }
 
-    init(title: String) {
-        self.valueField = NSTextField(labelWithString: "–")
+        let icon = NSImageView()
+        icon.image = NSImage(systemSymbolName: "clock", accessibilityDescription: nil)
+        icon.symbolConfiguration = .init(pointSize: 10, weight: .medium)
+        icon.contentTintColor = .tertiaryLabelColor
+        self.addArrangedSubview(icon)
 
-        super.init(frame: NSRect.zero)
+        for r in readings {
+            let block = NSStackView()
+            block.orientation = .horizontal
+            block.spacing = 5
 
-        self.wantsLayer = true
-        self.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
-        self.layer?.cornerRadius = 3
+            let name = NSTextField(labelWithString: r.name)
+            name.font = .systemFont(ofSize: 10)
+            name.textColor = .secondaryLabelColor
+            let time = NSTextField(labelWithString: r.time)
+            time.font = .monospacedDigitSystemFont(ofSize: 12, weight: .semibold)
+            let delta = NSTextField(labelWithString: "")
+            delta.font = .monospacedDigitSystemFont(ofSize: 9, weight: .regular)
+            delta.textColor = .tertiaryLabelColor
 
-        self.orientation = .vertical
-        self.distribution = .fill
-        self.alignment = .centerX
-        self.spacing = 2
-        self.edgeInsets = NSEdgeInsets(top: 6, left: 2, bottom: 6, right: 2)
-
-        self.valueField.font = NSFont.systemFont(ofSize: 14, weight: .semibold)
-        self.valueField.alignment = .center
-        self.valueField.lineBreakMode = .byTruncatingTail
-
-        let titleField = NSTextField(labelWithString: title)
-        titleField.font = NSFont.systemFont(ofSize: 9, weight: .regular)
-        titleField.textColor = .secondaryLabelColor
-        titleField.alignment = .center
-        titleField.lineBreakMode = .byTruncatingTail
-
-        self.addArrangedSubview(self.valueField)
-        self.addArrangedSubview(titleField)
-    }
-
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    override func updateLayer() {
-        self.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
-    }
-
-    func set(value: String, color: NSColor) {
-        self.valueField.stringValue = value
-        self.valueField.textColor = color
+            block.addArrangedSubview(name)
+            block.addArrangedSubview(time)
+            block.addArrangedSubview(delta)
+            self.addArrangedSubview(block)
+            self.entries.append((name, time, delta))
+        }
+        self.addArrangedSubview(NSView())
     }
 }

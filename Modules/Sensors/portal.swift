@@ -25,6 +25,7 @@ public class Portal: NSStackView, Portal_p, CombinedSensorsPortal {
     public private(set) var lastPowerUnit: String?
     public private(set) var lastMaxTemp: String?
     public private(set) var lastMaxTempValue: Double?
+    public private(set) var lastFanSpeed: Double?
     public private(set) var lastPowerFlow: PowerFlowReading?
 
     private var unknownSensorsState: Bool {
@@ -112,6 +113,8 @@ public class Portal: NSStackView, Portal_p, CombinedSensorsPortal {
             }
         }
         self.lastPowerFlow = flow
+
+        self.lastFanSpeed = values.filter({ $0.type == .fan && !$0.isComputed }).map({ $0.value }).max()
 
         let temps = values.filter({ $0.type == .temperature && ($0.group == .CPU || $0.group == .GPU) })
         if let hottest = temps.max(by: { $0.value < $1.value }) {

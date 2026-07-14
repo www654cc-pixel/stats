@@ -18,15 +18,13 @@ internal class LauncherPortal: NSStackView {
     private let titleField = NSTextField(labelWithString: localizedString("Launchpad"))
     private let contentStack = NSStackView()
 
-    private let iconSize: CGFloat = 36
-    private let columns: Int = 4
+    private let iconSize: CGFloat = 24
 
     init() {
         super.init(frame: NSRect(x: 0, y: 0, width: Constants.Popup.width, height: 0))
 
         self.wantsLayer = true
-        self.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
-        self.layer?.cornerRadius = 3
+        self.applyCardStyle()
 
         self.orientation = .vertical
         self.distribution = .fill
@@ -36,19 +34,19 @@ internal class LauncherPortal: NSStackView {
 
         self.titleField.font = NSFont.systemFont(ofSize: 12, weight: .medium)
 
+        // single-line layout: title on the left, app icons flowing after it
         let header = NSStackView()
         header.orientation = .horizontal
         header.distribution = .fill
-        header.spacing = 6
+        header.spacing = 12
+        self.contentStack.orientation = .horizontal
+        self.contentStack.distribution = .fill
+        self.contentStack.alignment = .centerY
+        self.contentStack.spacing = 8
         header.addArrangedSubview(self.titleField)
+        header.addArrangedSubview(self.contentStack)
         header.addArrangedSubview(NSView())
         self.addArrangedSubview(header)
-
-        self.contentStack.orientation = .vertical
-        self.contentStack.distribution = .fill
-        self.contentStack.alignment = .width
-        self.contentStack.spacing = Constants.Popup.spacing * 2
-        self.addArrangedSubview(self.contentStack)
 
         self.heightConstraint = self.heightAnchor.constraint(equalToConstant: 0)
         self.heightConstraint?.isActive = true
@@ -67,7 +65,7 @@ internal class LauncherPortal: NSStackView {
     }
 
     public override func updateLayer() {
-        self.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+        self.applyCardStyle()
     }
 
     internal func setWidth(_ width: CGFloat) {
@@ -84,42 +82,18 @@ internal class LauncherPortal: NSStackView {
         let paths = Store.shared.array(key: "launcher_favorites", defaultValue: []) as? [String] ?? []
         let apps = paths.compactMap { self.appInfo(at: $0) }
 
-        guard !apps.isEmpty else {
-            self.showEmpty()
-            return
+        if apps.isEmpty {
+            let label = NSTextField(labelWithString: localizedString("Add apps in settings"))
+            label.textColor = .secondaryLabelColor
+            label.font = NSFont.systemFont(ofSize: 10)
+            self.contentStack.addArrangedSubview(label)
+        } else {
+            apps.forEach { self.contentStack.addArrangedSubview(self.appTile($0)) }
         }
 
-        let innerWidth = self.frame.width - self.edgeInsets.left - self.edgeInsets.right
-        let tileWidth = max((innerWidth - CGFloat(self.columns - 1) * self.contentStack.spacing) / CGFloat(self.columns), self.iconSize)
-
-        var rowStack: NSStackView? = nil
-        apps.enumerated().forEach { idx, app in
-            if idx % self.columns == 0 {
-                rowStack = NSStackView()
-                rowStack?.orientation = .horizontal
-                rowStack?.distribution = .fillEqually
-                rowStack?.alignment = .top
-                rowStack?.spacing = self.contentStack.spacing
-                self.contentStack.addArrangedSubview(rowStack!)
-            }
-            rowStack?.addArrangedSubview(self.appTile(app, width: tileWidth))
-        }
-
-        let rows = (apps.count + self.columns - 1) / self.columns
-        let h = self.edgeInsets.top + 16 + self.spacing + CGFloat(rows) * (self.iconSize + 26 + self.contentStack.spacing) + self.edgeInsets.bottom
-        self.heightConstraint?.constant = CGFloat(h)
-        self.setFrameSize(NSSize(width: self.frame.width, height: CGFloat(h)))
-        self.onResize?()
-    }
-
-    private func showEmpty() {
-        let label = NSTextField(labelWithString: localizedString("Add apps in settings"))
-        label.textColor = .secondaryLabelColor
-        label.font = NSFont.systemFont(ofSize: 11)
-        label.alignment = .center
-        self.contentStack.addArrangedSubview(label)
-        self.heightConstraint?.constant = 60
-        self.setFrameSize(NSSize(width: self.frame.width, height: 60))
+        let h = self.edgeInsets.top + self.iconSize + 6 + self.edgeInsets.bottom
+        self.heightConstraint?.constant = h
+        self.setFrameSize(NSSize(width: self.frame.width, height: h))
         self.onResize?()
     }
 
@@ -132,27 +106,18 @@ internal class LauncherPortal: NSStackView {
         return (url, name, icon)
     }
 
-    private func appTile(_ app: (url: URL, name: String, icon: NSImage), width: CGFloat) -> NSView {
+    private func appTile(_ app: (url: URL, name: String, icon: NSImage)) -> NSView {
         let view = HoverTile()
-        view.orientation = .vertical
-        view.alignment = .centerX
-        view.spacing = 2
-        view.widthAnchor.constraint(equalToConstant: width).isActive = true
+        view.orientation = .horizontal
+        view.alignment = .centerY
+        view.edgeInsets = NSEdgeInsets(top: 3, left: 3, bottom: 3, right: 3)
+        view.toolTip = app.name
 
         let imageView = NSImageView(image: app.icon)
         imageView.imageScaling = .scaleProportionallyUpOrDown
         imageView.widthAnchor.constraint(equalToConstant: self.iconSize).isActive = true
         imageView.heightAnchor.constraint(equalToConstant: self.iconSize).isActive = true
-
-        let label = NSTextField(labelWithString: app.name)
-        label.font = NSFont.systemFont(ofSize: 9, weight: .regular)
-        label.alignment = .center
-        label.lineBreakMode = .byTruncatingTail
-        label.maximumNumberOfLines = 1
-        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-
         view.addArrangedSubview(imageView)
-        view.addArrangedSubview(label)
 
         let click = NSClickGestureRecognizer(target: self, action: #selector(self.handleClick(_:)))
         view.addGestureRecognizer(click)

@@ -36,14 +36,19 @@ public extension Portal_p {
     }
 }
 
-// Snapshot accessors used by the combined "overview" summary. Adopted by the
-// CPU / RAM / Sensors module portals so the combined view can read their latest
+// Snapshot accessors used by the combined overview (summary + metric tiles).
+// Adopted by the module portals so the combined view can read their latest
 // values without importing module-private types.
 public protocol CombinedCPUPortal: AnyObject {
-    var lastUsage: Double? { get }
+    var lastUsage: Double? { get }          // 0...1
+    var lastSystemLoad: Double? { get }     // 0...1
+    var lastUserLoad: Double? { get }       // 0...1
 }
 public protocol CombinedRAMPortal: AnyObject {
     var lastPressure: RAMPressure? { get }
+    var lastUsage: Double? { get }          // 0...1
+    var lastUsedBytes: Double? { get }
+    var lastTotalBytes: Double? { get }
 }
 public protocol CombinedSensorsPortal: AnyObject {
     var lastPower: String? { get }
@@ -51,7 +56,41 @@ public protocol CombinedSensorsPortal: AnyObject {
     var lastPowerUnit: String? { get }
     var lastMaxTemp: String? { get }
     var lastMaxTempValue: Double? { get }
+    var lastFanSpeed: Double? { get }       // RPM of the fastest fan
     var lastPowerFlow: PowerFlowReading? { get }
+}
+public protocol CombinedGPUPortal: AnyObject {
+    var lastUtilization: Double? { get }    // 0...1
+    var lastRenderUtilization: Double? { get }
+    var lastANEUtilization: Double? { get }
+}
+public protocol CombinedDiskPortal: AnyObject {
+    var lastPercentage: Double? { get }     // 0...1 of the root drive
+    var lastFreeBytes: Int64? { get }
+    var lastReadBytes: Int64? { get }       // bytes/s
+    var lastWriteBytes: Int64? { get }      // bytes/s
+}
+public protocol CombinedNetPortal: AnyObject {
+    var lastDownloadBytes: Int64? { get }   // bytes/s
+    var lastUploadBytes: Int64? { get }     // bytes/s
+    var lastPublicIP: String? { get }       // "1.2.3.4 (DE)"
+}
+public protocol CombinedClockPortal: AnyObject {
+    // computed at call time so the row always shows the current minute
+    var clockReadings: [ClockReading] { get }
+}
+
+// one timezone entry for the combined overview's single-line clock row
+public struct ClockReading {
+    public var name: String
+    public var time: String     // "07:04"
+    public var dayDelta: Int    // calendar-day offset vs the local timezone
+
+    public init(name: String, time: String, dayDelta: Int) {
+        self.name = name
+        self.time = time
+        self.dayDelta = dayDelta
+    }
 }
 
 // Latest power-rail readings (in watts) published by the Sensors portal for

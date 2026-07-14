@@ -12,7 +12,13 @@
 import Cocoa
 import Kit
 
-public class Portal: PortalWrapper {
+public class Portal: PortalWrapper, CombinedDiskPortal {
+    // latest snapshots, used by the combined overview tiles
+    public private(set) var lastPercentage: Double?
+    public private(set) var lastFreeBytes: Int64?
+    public private(set) var lastReadBytes: Int64?
+    public private(set) var lastWriteBytes: Int64?
+
     private var circle: PieChartView? = nil
     private var chart: NetworkChartView? = nil
     
@@ -100,6 +106,8 @@ public class Portal: PortalWrapper {
     }
     
     internal func utilizationCallback(_ value: drive) {
+        self.lastPercentage = value.percentage
+        self.lastFreeBytes = value.free
         DispatchQueue.main.async(execute: {
             if (self.window?.isVisible ?? false) || !self.initialized {
                 self.nameField?.stringValue = value.mediaName
@@ -117,6 +125,8 @@ public class Portal: PortalWrapper {
     }
     
     internal func activityCallback(_ value: drive) {
+        self.lastReadBytes = value.activity.read
+        self.lastWriteBytes = value.activity.write
         DispatchQueue.main.async(execute: {
             self.chart?.addValue(upload: Double(value.activity.write), download: Double(value.activity.read))
         })

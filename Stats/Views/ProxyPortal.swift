@@ -26,9 +26,15 @@ internal class ProxyPortal: NSStackView {
     private var titleField = NSTextField(labelWithString: localizedString("Proxy"))
     private var modeField = NSTextField(labelWithString: "")
     private var speedField = NSTextField(labelWithString: "")
+    private var currentField = NSTextField(labelWithString: "")
+    private var currentDelayField = NSTextField(labelWithString: "")
+    private let chevron = NSImageView()
     private let nodesStack = NSStackView()
+    // the node list is collapsed into a single summary row by default
+    private var expanded: Bool = false
 
     private var nodeRows: [String: ProxyNodeRow] = [:]
+    private var nodeCount: Int = 0
     private var currentNode: String = ""
     private var groupName: String = ""
     private var switchable: Bool = false
@@ -52,8 +58,7 @@ internal class ProxyPortal: NSStackView {
         super.init(frame: NSRect(x: 0, y: 0, width: Constants.Popup.width, height: self.headerHeight))
 
         self.wantsLayer = true
-        self.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
-        self.layer?.cornerRadius = 3
+        self.applyCardStyle()
 
         self.orientation = .vertical
         self.distribution = .fill
@@ -68,6 +73,15 @@ internal class ProxyPortal: NSStackView {
         self.speedField.textColor = .secondaryLabelColor
         self.speedField.alignment = .right
 
+        self.currentField.font = NSFont.systemFont(ofSize: 11, weight: .semibold)
+        self.currentField.lineBreakMode = .byTruncatingTail
+        self.currentDelayField.font = NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .regular)
+        self.currentDelayField.textColor = .secondaryLabelColor
+
+        self.chevron.image = NSImage(systemSymbolName: "chevron.down", accessibilityDescription: nil)
+        self.chevron.symbolConfiguration = .init(pointSize: 9, weight: .semibold)
+        self.chevron.contentTintColor = .tertiaryLabelColor
+
         let header = NSStackView()
         header.orientation = .horizontal
         header.distribution = .fill
@@ -76,13 +90,19 @@ internal class ProxyPortal: NSStackView {
         header.addArrangedSubview(self.titleField)
         header.addArrangedSubview(self.modeField)
         header.addArrangedSubview(NSView())
+        header.addArrangedSubview(self.currentField)
+        header.addArrangedSubview(self.currentDelayField)
         header.addArrangedSubview(self.speedField)
+        header.addArrangedSubview(self.chevron)
+        let click = NSClickGestureRecognizer(target: self, action: #selector(self.toggleExpanded))
+        header.addGestureRecognizer(click)
         self.addArrangedSubview(header)
 
         self.nodesStack.orientation = .vertical
         self.nodesStack.distribution = .fill
         self.nodesStack.alignment = .width
         self.nodesStack.spacing = 1
+        self.nodesStack.isHidden = true
         self.addArrangedSubview(self.nodesStack)
 
         self.heightConstraint = self.heightAnchor.constraint(equalToConstant: self.headerHeight)
@@ -94,11 +114,18 @@ internal class ProxyPortal: NSStackView {
     }
 
     public override func updateLayer() {
-        self.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+        self.applyCardStyle()
     }
 
     internal func setWidth(_ width: CGFloat) {
         self.setFrameSize(NSSize(width: width, height: self.frame.height))
+    }
+
+    @objc private func toggleExpanded() {
+        self.expanded.toggle()
+        self.nodesStack.isHidden = !self.expanded
+        self.chevron.image = NSImage(systemSymbolName: self.expanded ? "chevron.up" : "chevron.down", accessibilityDescription: nil)
+        self.updateHeight(nodeCount: self.nodeCount)
     }
 
     internal func start() {
@@ -184,6 +211,7 @@ internal class ProxyPortal: NSStackView {
                 self.groupName = name
                 self.switchable = switchable
                 self.titleField.stringValue = localizedString("Proxy") + (name.isEmpty ? "" : " · \(name)")
+                self.currentField.stringValue = now
                 self.rebuildNodes(all)
             }
 
@@ -239,7 +267,14 @@ internal class ProxyPortal: NSStackView {
             if let data = data, let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
                 delay = (json["delay"] as? NSNumber)?.intValue ?? 0
             }
-            DispatchQueue.main.async { self.nodeRows[name]?.setDelay(delay) }
+            DispatchQueue.main.async {
+                self.nodeRows[name]?.setDelay(delay)
+                if name == self.currentNode {
+                    let style = ProxyNodeRow.delayStyle(delay)
+                    self.currentDelayField.stringValue = style.text
+                    self.currentDelayField.textColor = style.color
+                }
+            }
         }.resume()
     }
 
@@ -260,11 +295,13 @@ internal class ProxyPortal: NSStackView {
             $0.value.setClickable(self.switchable)
             $0.value.setCurrent($0.key == self.currentNode)
         }
+        self.nodeCount = names.count
         self.updateHeight(nodeCount: names.count)
     }
 
     private func updateHeight(nodeCount: Int) {
-        let h = self.headerHeight + (nodeCount > 0 ? CGFloat(nodeCount) * (self.rowHeight + 1) + 4 : 0) + self.edgeInsets.top + self.edgeInsets.bottom
+        let listH = (self.expanded && nodeCount > 0) ? CGFloat(nodeCount) * (self.rowHeight + 1) + 4 : 0
+        let h = self.headerHeight + listH + self.edgeInsets.top + self.edgeInsets.bottom
         self.heightConstraint?.constant = h
         self.setFrameSize(NSSize(width: self.frame.width, height: h))
         self.onResize?()
@@ -343,13 +380,16 @@ private class ProxyNodeRow: NSStackView {
         self.nameField.font = NSFont.systemFont(ofSize: 11, weight: current ? .semibold : .regular)
     }
 
-    func setDelay(_ delay: Int) {
+    static func delayStyle(_ delay: Int) -> (text: String, color: NSColor) {
         if delay <= 0 {
-            self.delayField.stringValue = localizedString("timeout")
-            self.delayField.textColor = .systemRed
-        } else {
-            self.delayField.stringValue = "\(delay) ms"
-            self.delayField.textColor = delay < 150 ? .systemGreen : (delay < 300 ? .systemOrange : .systemRed)
+            return (localizedString("timeout"), .systemRed)
         }
+        return ("\(delay) ms", delay < 150 ? .systemGreen : (delay < 300 ? .systemOrange : .systemRed))
+    }
+
+    func setDelay(_ delay: Int) {
+        let style = ProxyNodeRow.delayStyle(delay)
+        self.delayField.stringValue = style.text
+        self.delayField.textColor = style.color
     }
 }

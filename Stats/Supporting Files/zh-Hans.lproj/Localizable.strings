@@ -421,6 +421,8 @@
 "Power flow" = "电源流向";
 "CPU Rail" = "CPU 供电轨";
 "GPU Rail" = "GPU 供电轨";
+"Launchpad" = "启动器";
+"Add apps in settings" = "在设置中添加应用";
 "High power" = "高功耗";
 "Others" = "其他";
 "Is charging" = "充电中";

@@ -12,10 +12,28 @@
 import AppKit
 import Kit
 
-public class Portal: NSStackView, Portal_p {
+public class Portal: NSStackView, Portal_p, CombinedClockPortal {
     public var isWide: Bool { true }
     public var name: String
     public var onResize: (() -> Void)?
+
+    // one-line digital readings for the combined overview's clock row,
+    // computed at call time so the row always shows the current minute
+    public var clockReadings: [ClockReading] {
+        let now = Date()
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm"
+        let local = Calendar.current
+        let dayHere = local.ordinality(of: .day, in: .era, for: now) ?? 0
+        return self.list.filter({ $0.enabled }).map { clock in
+            let tz = TimeZone(from: clock.tz)
+            formatter.timeZone = tz
+            var cal = Calendar(identifier: .gregorian)
+            cal.timeZone = tz
+            let dayThere = cal.ordinality(of: .day, in: .era, for: now) ?? 0
+            return ClockReading(name: clock.name, time: formatter.string(from: now), dayDelta: dayThere - dayHere)
+        }
+    }
     
     private let header: PortalHeader
     private var grid: NSGridView?

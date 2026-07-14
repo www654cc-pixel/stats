@@ -163,6 +163,8 @@
 "Power flow" = "Power flow";
 "CPU Rail" = "CPU Rail";
 "GPU Rail" = "GPU Rail";
+"Launchpad" = "Launchpad";
+"Add apps in settings" = "Add apps in settings";
 "High power" = "High power";
 "Others" = "Others";
 "timeout" = "timeout";

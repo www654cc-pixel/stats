@@ -12,7 +12,12 @@
 import Cocoa
 import Kit
 
-public class Portal: PortalWrapper {
+public class Portal: PortalWrapper, CombinedNetPortal {
+    // latest snapshots, used by the combined overview tiles
+    public private(set) var lastDownloadBytes: Int64?
+    public private(set) var lastUploadBytes: Int64?
+    public private(set) var lastPublicIP: String?
+
     private var chart: NetworkChartView? = nil
     
     private var publicIPField: NSTextField? = nil
@@ -106,6 +111,13 @@ public class Portal: PortalWrapper {
     }
     
     public func usageCallback(_ value: Network_Usage) {
+        self.lastDownloadBytes = value.bandwidth.download
+        self.lastUploadBytes = value.bandwidth.upload
+        if let addr = value.raddr.v4 {
+            self.lastPublicIP = (value.wifiDetails.countryCode != nil) ? "\(addr) (\(value.wifiDetails.countryCode!))" : addr
+        } else {
+            self.lastPublicIP = nil
+        }
         DispatchQueue.main.async(execute: {
             if let chart = self.chart {
                 chart.setBase(self.base)

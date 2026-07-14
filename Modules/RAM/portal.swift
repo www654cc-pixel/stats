@@ -24,6 +24,9 @@ public class Portal: PortalWrapper, CombinedRAMPortal {
 
     // latest snapshot, used by the combined overview summary
     public private(set) var lastPressure: RAMPressure?
+    public private(set) var lastUsage: Double?
+    public private(set) var lastUsedBytes: Double?
+    public private(set) var lastTotalBytes: Double?
     
     private var appColorState: SColor = .secondBlue
     private var appColor: NSColor { self.appColorState.additional as? NSColor ?? NSColor.systemRed }
@@ -102,6 +105,9 @@ public class Portal: PortalWrapper, CombinedRAMPortal {
     
     internal func callback(_ value: RAM_Usage) {
         self.lastPressure = value.pressure.value
+        self.lastUsage = value.usage
+        self.lastUsedBytes = value.used
+        self.lastTotalBytes = value.total
         DispatchQueue.main.async(execute: {
             if (self.window?.isVisible ?? false) || !self.initialized {
                 self.usedField?.stringValue = Units(bytes: Int64(value.used)).getReadableMemory(style: .memory)

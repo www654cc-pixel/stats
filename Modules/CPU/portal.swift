@@ -18,8 +18,10 @@ public class Portal: PortalWrapper, CombinedCPUPortal {
 
     private var initialized: Bool = false
 
-    // latest total usage snapshot, used by the combined overview summary
+    // latest usage snapshots, used by the combined overview summary and tiles
     public private(set) var lastUsage: Double?
+    public private(set) var lastSystemLoad: Double?
+    public private(set) var lastUserLoad: Double?
     
     private var systemField: NSTextField? = nil
     private var userField: NSTextField? = nil
@@ -139,6 +141,8 @@ public class Portal: PortalWrapper, CombinedCPUPortal {
     
     internal func callback(_ value: CPU_Load) {
         self.lastUsage = value.totalUsage
+        self.lastSystemLoad = value.systemLoad
+        self.lastUserLoad = value.userLoad
         DispatchQueue.main.async(execute: {
             if (self.window?.isVisible ?? false) || !self.initialized {
                 self.systemField?.stringValue = "\(Int(value.systemLoad.rounded(toPlaces: 2) * 100))%"

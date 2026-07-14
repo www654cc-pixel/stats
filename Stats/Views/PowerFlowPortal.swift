@@ -77,8 +77,7 @@ internal class PowerFlowPortal: NSStackView {
         super.init(frame: NSRect(x: 0, y: 0, width: Constants.Popup.width, height: 0))
 
         self.wantsLayer = true
-        self.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
-        self.layer?.cornerRadius = 3
+        self.applyCardStyle()
 
         self.orientation = .vertical
         self.distribution = .fill
@@ -133,7 +132,7 @@ internal class PowerFlowPortal: NSStackView {
     }
 
     public override func updateLayer() {
-        self.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+        self.applyCardStyle()
     }
 
     internal func setWidth(_ width: CGFloat) {

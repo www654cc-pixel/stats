@@ -12,7 +12,12 @@
 import Cocoa
 import Kit
 
-public class Portal: PortalWrapper {
+public class Portal: PortalWrapper, CombinedGPUPortal {
+    // latest snapshots, used by the combined overview tiles
+    public private(set) var lastUtilization: Double?
+    public private(set) var lastRenderUtilization: Double?
+    public private(set) var lastANEUtilization: Double?
+
     private var circle: PieChartView = PieChartView()
     
     private var usageField: NSTextField? = nil
@@ -78,6 +83,9 @@ public class Portal: PortalWrapper {
     }
     
     internal func callback(_ value: GPU_Info) {
+        self.lastUtilization = value.utilization
+        self.lastRenderUtilization = value.renderUtilization
+        self.lastANEUtilization = value.aneUtilization
         DispatchQueue.main.async(execute: {
             if (self.window?.isVisible ?? false) || !self.initialized {
                 if let value = value.utilization {
