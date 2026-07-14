@@ -17,6 +17,7 @@ internal class CombinedView: NSObject, NSGestureRecognizerDelegate {
     private var view: NSView = NSView(frame: NSRect(x: 0, y: 0, width: 0, height: Constants.Widget.height))
     private var popup: PopupWindow? = nil
     private var powerTimer: Timer? = nil
+    private var popupVisible: Bool = false
 
     private var status: Bool {
         Store.shared.bool(key: "CombinedModules", defaultValue: false)
@@ -148,8 +149,12 @@ internal class CombinedView: NSObject, NSGestureRecognizerDelegate {
 
         self.refreshPowerIcon()
         self.powerTimer?.invalidate()
-        self.powerTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
-            self?.refreshPowerIcon()
+        self.powerTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
+            guard let self = self else { return }
+            // PowerFlowPortal already refreshes the same data while the overview
+            // popup is open — skip the redundant icon update to save CPU.
+            guard !self.popupVisible else { return }
+            self.refreshPowerIcon()
         }
     }
 
@@ -265,8 +270,13 @@ internal class CombinedView: NSObject, NSGestureRecognizerDelegate {
             
             popup.setFrameOrigin(NSPoint(x: x, y: y))
             popup.setIsVisible(true)
+            self.popupVisible = true
         } else {
             popup.setIsVisible(false)
+            self.popupVisible = false
+            // refresh the icon once now that the popup closed, so the menubar
+            // catches up immediately instead of waiting up to 3 s
+            self.refreshPowerIcon()
         }
     }
     

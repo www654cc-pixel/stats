@@ -223,6 +223,16 @@ internal class MetricTile: NSStackView {
     private let bar = TileBarView()
     private let spark = TileSparklineView()
 
+    // cached last values — NSTextField.stringValue assignment triggers
+    // layout even when the string is identical, so diffing here avoids
+    // 6 tiles × 3 fields = 18 redundant assignments every second.
+    private var lastValue: String = ""
+    private var lastValueColor: NSColor = .clear
+    private var lastLeft: String = ""
+    private var lastRight: String = ""
+    private var lastFraction: Double = -1
+    private var lastBarColor: NSColor = .clear
+
     init(module: String, symbol: String, viz: Viz) {
         self.moduleName = module
 
@@ -299,13 +309,27 @@ internal class MetricTile: NSStackView {
     }
 
     func set(value: String, valueColor: NSColor, fraction: Double?, barColor: NSColor, left: String, right: String) {
-        self.valueField.stringValue = value
-        self.valueField.textColor = valueColor
-        if let fraction {
+        if value != self.lastValue {
+            self.lastValue = value
+            self.valueField.stringValue = value
+        }
+        if valueColor != self.lastValueColor {
+            self.lastValueColor = valueColor
+            self.valueField.textColor = valueColor
+        }
+        if let fraction, fraction != self.lastFraction || barColor != self.lastBarColor {
+            self.lastFraction = fraction
+            self.lastBarColor = barColor
             self.bar.set(fraction: fraction, color: barColor)
         }
-        self.leftField.stringValue = left
-        self.rightField.stringValue = right
+        if left != self.lastLeft {
+            self.lastLeft = left
+            self.leftField.stringValue = left
+        }
+        if right != self.lastRight {
+            self.lastRight = right
+            self.rightField.stringValue = right
+        }
     }
 
     func push(down: Double, up: Double) {

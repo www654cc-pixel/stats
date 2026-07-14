@@ -187,7 +187,6 @@ internal class PowerFlowPortal: NSStackView {
         self.levelBar.update(model)
         self.levelBar.isHidden = !model.hasBattery
         self.sankey.model = model
-        self.sankey.needsDisplay = true
 
         // resample the per-process energy impact every third tick (~6s)
         if self.topTicker % 3 == 0 { self.sampleTopProcesses() }
@@ -303,44 +302,50 @@ internal class PowerFlowPortal: NSStackView {
         }
     }
 
+    /// Top processes by CPU%, sampled via libproc (proc_pid_rusage) instead of
+    /// forking `top`. Two samples 200 ms apart on this background thread, then
+    /// the CPU-time delta is converted to a percentage of one core. This avoids
+    /// the 3-8 % CPU spike that `top -l 2` caused every 6 seconds.
     static private func readTopProcesses(count: Int) -> [TopProcess] {
-        let task = Process()
-        task.launchPath = "/usr/bin/top"
-        task.arguments = ["-o", "power", "-l", "2", "-n", "\(count)", "-stats", "pid,command,power"]
+        let pidCount = proc_listallpids(nil, 0)
+        guard pidCount > 0 else { return [] }
+        var pids = [pid_t](repeating: 0, count: Int(pidCount))
+        let actualCount = proc_listallpids(&pids, pidCount)
+        guard actualCount > 0 else { return [] }
 
-        let outputPipe = Pipe()
-        defer { outputPipe.fileHandleForReading.closeFile() }
-        task.standardOutput = outputPipe
+        let all = Array(pids.prefix(Int(actualCount)))
+        let intervalNs: Double = 200_000_000 // 200 ms
 
-        do {
-            try task.run()
-        } catch {
-            return []
-        }
-
-        let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
-        guard !outputData.isEmpty,
-              let output = String(data: outputData.advanced(by: outputData.count/2), encoding: .utf8) else { return [] }
-
-        var processes: [TopProcess] = []
-        output.enumerateLines { (line, _) in
-            if line.matches("^\\d+ *[^(\\d)]*\\d+\\.*\\d* *$") {
-                let str = line.trimmingCharacters(in: .whitespaces)
-                let pidFind = str.findAndCrop(pattern: "^\\d+")
-                let usageFind = pidFind.remain.findAndCrop(pattern: " +[0-9]+.*[0-9]*$")
-                let command = usageFind.remain.trimmingCharacters(in: .whitespaces)
-                let pid = Int(pidFind.cropped) ?? 0
-                guard let usage = Double(usageFind.cropped.filter("01234567890.".contains)) else { return }
-
-                var name: String = command
-                if let app = NSRunningApplication(processIdentifier: pid_t(pid)), let n = app.localizedName {
-                    name = n
+        func cpuTime(_ pid: pid_t) -> UInt64? {
+            var usage = rusage_info_current()
+            let result = withUnsafeMutablePointer(to: &usage) {
+                $0.withMemoryRebound(to: (rusage_info_t?.self), capacity: 1) {
+                    proc_pid_rusage(pid, RUSAGE_INFO_CURRENT, $0)
                 }
-                processes.append(TopProcess(pid: pid, name: name, usage: usage))
             }
+            return result == -1 ? nil : usage.ri_user_time + usage.ri_system_time
         }
 
-        return Array(processes.suffix(count).sorted(by: { $0.usage > $1.usage }))
+        var t1: [pid_t: UInt64] = [:]
+        for pid in all { if let v = cpuTime(pid) { t1[pid] = v } }
+
+        usleep(200_000) // 200 ms — far cheaper than top's multi-second run
+
+        var deltas: [(pid: pid_t, pct: Double)] = []
+        for pid in all {
+            guard let a = t1[pid], let b = cpuTime(pid) else { continue }
+            let delta = b > a ? Double(b - a) : 0
+            deltas.append((pid, delta / intervalNs * 100))
+        }
+        deltas.sort { $0.pct > $1.pct }
+
+        return deltas.prefix(count).map { d in
+            var name = "pid \(d.pid)"
+            if let app = NSRunningApplication(processIdentifier: d.pid), let n = app.localizedName {
+                name = n
+            }
+            return TopProcess(pid: Int(d.pid), name: name, usage: d.pct)
+        }
     }
 }
 
@@ -443,7 +448,27 @@ private class BatteryLevelBar: NSView {
 // MARK: - sankey
 
 private class PowerSankeyView: NSView {
-    fileprivate var model = PowerFlowModel()
+    fileprivate var model = PowerFlowModel() {
+        didSet {
+            // only redraw when a visible value changed — avoids the 2 s
+            // full-redraw cycle when power readings are stable
+            let m = self.model
+            let o = oldValue
+            let stateChanged = m.isCharging != o.isCharging
+                || m.externalConnected != o.externalConnected
+                || m.hasBattery != o.hasBattery
+            let levelChanged = abs(m.level - o.level) >= 0.01
+            let powerChanged = abs((m.systemTotal ?? -1) - (o.systemTotal ?? -1)) >= 0.2
+                || abs((m.dcIn ?? -1) - (o.dcIn ?? -1)) >= 0.2
+                || abs((m.cpu ?? -1) - (o.cpu ?? -1)) >= 0.2
+                || abs((m.gpu ?? -1) - (o.gpu ?? -1)) >= 0.2
+                || abs((m.display ?? -1) - (o.display ?? -1)) >= 0.2
+                || abs(m.batteryWatts - o.batteryWatts) >= 0.2
+            if stateChanged || levelChanged || powerChanged {
+                self.needsDisplay = true
+            }
+        }
+    }
 
     override var isFlipped: Bool { true }
 
@@ -754,7 +779,7 @@ private class PowerProcessRow: NSStackView {
     func set(_ process: TopProcess) {
         self.icon.image = process.icon
         self.nameField.stringValue = process.name
-        self.valueField.stringValue = String(format: "%.1f", process.usage)
+        self.valueField.stringValue = String(format: "%.1f%%", process.usage)
     }
 
     func clear() {

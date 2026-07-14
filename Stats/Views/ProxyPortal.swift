@@ -43,6 +43,11 @@ internal class ProxyPortal: NSStackView {
     private var testTimer: Timer?
     private var lastDownload: Int64?
     private var lastUpload: Int64?
+    // throttles full-list delay tests so we don't fire N concurrent HTTP
+    // requests every 30 s — only the current node is tested on each refresh;
+    // all nodes are tested lazily when the list is first expanded.
+    private var allDelaysTestedAt: Date = .distantPast
+    private let allDelayCacheInterval: TimeInterval = 300 // 5 min
 
     private let session: URLSession = {
         let c = URLSessionConfiguration.ephemeral
@@ -126,6 +131,10 @@ internal class ProxyPortal: NSStackView {
         self.nodesStack.isHidden = !self.expanded
         self.chevron.image = NSImage(systemSymbolName: self.expanded ? "chevron.up" : "chevron.down", accessibilityDescription: nil)
         self.updateHeight(nodeCount: self.nodeCount)
+        // when the user expands the list, test all node delays if stale
+        if self.expanded, Date().timeIntervalSince(self.allDelaysTestedAt) > self.allDelayCacheInterval {
+            self.testAllDelays()
+        }
     }
 
     internal func start() {
@@ -215,8 +224,35 @@ internal class ProxyPortal: NSStackView {
                 self.rebuildNodes(all)
             }
 
-            all.forEach { name in self.testDelay(name) }
+            // only test the current node on each 30 s refresh; the full list
+            // is tested lazily when the user expands the node list.
+            if !now.isEmpty { self.testDelay(now) }
         }
+    }
+
+    /// Test all node delays in bounded batches (max 5 concurrent) to avoid
+    /// hammering the proxy controller and the network when there are many nodes.
+    private func testAllDelays() {
+        let names = Array(self.nodeRows.keys)
+        guard !names.isEmpty else { return }
+        self.allDelaysTestedAt = Date()
+        let batchSize = 5
+        var index = 0
+        func nextBatch() {
+            let end = min(index + batchSize, names.count)
+            guard index < end else { return }
+            let group = DispatchGroup()
+            for i in index..<end {
+                group.enter()
+                let name = names[i]
+                self.testDelay(name) { group.leave() }
+            }
+            group.notify(queue: .global(qos: .utility)) {
+                index = end
+                if index < names.count { nextBatch() }
+            }
+        }
+        nextBatch()
     }
 
     // pick the switchable selector group to control: a manual (Selector) group with the
@@ -258,10 +294,14 @@ internal class ProxyPortal: NSStackView {
         }.resume()
     }
 
-    private func testDelay(_ name: String) {
+    private func testDelay(_ name: String, _ completion: (() -> Void)? = nil) {
         guard let encoded = name.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
-              let url = URL(string: self.base + "/proxies/\(encoded)/delay?url=http://www.gstatic.com/generate_204&timeout=5000") else { return }
+              let url = URL(string: self.base + "/proxies/\(encoded)/delay?url=http://www.gstatic.com/generate_204&timeout=5000") else {
+            completion?()
+            return
+        }
         self.session.dataTask(with: url) { [weak self] data, _, _ in
+            defer { completion?() }
             guard let self = self else { return }
             var delay = 0
             if let data = data, let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {

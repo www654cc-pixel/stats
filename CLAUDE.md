@@ -15,7 +15,8 @@ opens a wide overview panel (`Popup` in `Stats/Views/CombinedView.swift`).
   memory pressure / temperature), module portals in a 2–3 column grid, wide cards below.
 - **Power-flow sankey card** (`Stats/Views/PowerFlowPortal.swift`): adapter/battery →
   Mac → CPU/GPU/Display/Others energy-flow diagram with battery level bar, charge
-  status + health chips, and top-3 power-hungry processes (`top -o power`). Three
+  status + health chips, and top-3 CPU-consuming processes (via libproc
+  `proc_pid_rusage`, not `top`). Three
   layouts: charging, on battery, battery-assist (adapter can't keep up). Custom
   drawing in `PowerSankeyView` (flipped coords, bezier ribbons).
 - **Proxy panel** (`Stats/Views/ProxyPortal.swift`): mihomo REST API at
