@@ -523,17 +523,31 @@ private class PowerSankeyView: NSView {
         }
 
         // ---- consumers (right side) ----
+        // #2: only add consumers with non-trivial wattage to avoid 0 W phantom ribbons
         var consumers: [(name: String, symbol: String, watts: Double, color: NSColor)] = []
-        if m.cpu != nil || m.gpu != nil {
-            consumers.append(("CPU", "cpu.fill", m.cpu ?? 0, .systemBlue))
-            consumers.append(("GPU", "square.grid.3x3.fill", m.gpu ?? 0, .systemPurple))
+        if let cpu = m.cpu, cpu > 0.05 {
+            consumers.append(("CPU", "cpu.fill", cpu, .systemBlue))
         }
-        if let d = m.display {
+        if let gpu = m.gpu, gpu > 0.05 {
+            consumers.append(("GPU", "square.grid.3x3.fill", gpu, .systemPurple))
+        }
+        if let d = m.display, d > 0.05 {
             consumers.append((localizedString("Display"), "sun.max.fill", d, .systemTeal))
         }
-        let others = consumers.isEmpty ? system : m.others
-        let othersIsTop = others >= consumers.map({ $0.watts }).max() ?? 0
-        consumers.append((localizedString("Others"), "ellipsis", others, othersIsTop && others > 10 ? .systemOrange : .systemGray))
+        // others absorbs the remainder; when sensors overcount (cpu+gpu+display > system)
+        // others is clamped to 0 and consumers will be normalized below (#1)
+        let knownSum = consumers.reduce(0.0) { $0 + $1.watts }
+        let others = max(system - knownSum, 0)
+        if others > 0.05 || consumers.isEmpty {
+            let othersIsTop = others >= consumers.map({ $0.watts }).max() ?? 0
+            let othersColor: NSColor = (othersIsTop && others > system * 0.5 && system > 20) ? .systemOrange : .systemGray
+            consumers.append((localizedString("Others"), "ellipsis", others, othersColor))
+        }
+        // #1: normalize for flow conservation — when sensors overcount, scale
+        // ribbon thicknesses so the right side matches the left. Labels keep
+        // showing the real wattage; only visual proportions are adjusted.
+        let consumerSum = consumers.reduce(0.0) { $0 + $1.watts }
+        let norm: Double = consumerSum > system ? system / consumerSum : 1.0
 
         // ---- flows into the mac node ----
         let adapterToSystem = m.externalConnected ? max(system - discharge, 0) : 0
@@ -542,26 +556,30 @@ private class PowerSankeyView: NSView {
         let assistT = (m.externalConnected && discharge > 0.3) ? thickness(discharge) : 0
         let batteryT = m.externalConnected ? 0 : thickness(max(discharge, system))
 
+        // ---- right endpoints: evenly spread rows ----
+        // #8: compute capped thickness once and use it on BOTH the Mac side and
+        // the right side, so ribbons are parallel instead of tapering.
+        let endX = bounds.width - rightBlockW
+        let rowH = (bounds.height - 8) / CGFloat(consumers.count)
+        var rightEnds: [Endpoint] = []
+        var drawT: [CGFloat] = []
+        for (i, c) in consumers.enumerated() {
+            let centerY = 4 + rowH * (CGFloat(i) + 0.5)
+            let t = min(thickness(c.watts * norm), rowH - 8)
+            drawT.append(t)
+            rightEnds.append(Endpoint(x: endX, top: centerY - t/2, height: t))
+        }
+
         // ---- mac node ----
-        let outSum = consumers.reduce(CGFloat(0)) { $0 + thickness($1.watts) }
+        let outSum = drawT.reduce(0, +)
         let inSum = adapterT + assistT + batteryT
         let macH = max(macSize.height, max(outSum, inSum) + 10)
         let macRect = NSRect(x: macCenterX - macSize.width/2, y: (bounds.height - macH)/2, width: macSize.width, height: macH)
 
-        // ---- right endpoints: evenly spread rows, thickness capped to the row ----
-        let endX = bounds.width - rightBlockW
-        let rowH = (bounds.height - 8) / CGFloat(consumers.count)
-        var rightEnds: [Endpoint] = []
-        for (i, c) in consumers.enumerated() {
-            let centerY = 4 + rowH * (CGFloat(i) + 0.5)
-            let t = min(thickness(c.watts), rowH - 8)
-            rightEnds.append(Endpoint(x: endX, top: centerY - t/2, height: t))
-        }
-
         // ---- right ribbons out of the mac node ----
         var outCursor = macRect.midY - outSum/2
         for (i, c) in consumers.enumerated() {
-            let t = thickness(c.watts)
+            let t = drawT[i]
             self.ribbon(from: Endpoint(x: macRect.maxX, top: outCursor, height: t), to: rightEnds[i], color: c.color, alpha: 0.42)
             outCursor += t
         }
@@ -575,8 +593,15 @@ private class PowerSankeyView: NSView {
             let bH: CGFloat = assistT > 0 ? max(40, assistT + 16) : 0
             let totalH = aH + (bH > 0 ? bH + 10 : 0)
             let aRect = NSRect(x: leftX, y: (bounds.height - totalH)/2, width: leftNodeW, height: aH)
-            let rated = m.acRatedWatts > 0 ? "\(m.acRatedWatts) W" : String(format: "%.0f W", m.dcIn ?? (system + charge))
-            self.node(rect: aRect, symbol: "powerplug.fill", title: rated, color: .systemGray)
+            // #5: show actual power draw, not the adapter's rated capacity
+            let actualDraw: Double
+            if let dcIn = m.dcIn, dcIn > 0.1 {
+                actualDraw = dcIn
+            } else {
+                actualDraw = adapterToSystem + charge
+            }
+            let adapterTitle = actualDraw > 0.1 ? self.watts(actualDraw) : (m.acRatedWatts > 0 ? "\(m.acRatedWatts) W" : "AC")
+            self.node(rect: aRect, symbol: "powerplug.fill", title: adapterTitle, color: .systemGray)
 
             var srcCursor = aRect.midY - outH/2
             if chargeT > 0 {
@@ -635,7 +660,8 @@ private class PowerSankeyView: NSView {
         }
 
         // mac node on top of ribbons
-        self.node(rect: macRect, symbol: "laptopcomputer", title: nil, color: .secondaryLabelColor)
+        // #4: show total system wattage so the user doesn't have to sum components
+        self.node(rect: macRect, symbol: "laptopcomputer", title: self.watts(system), color: .secondaryLabelColor)
 
         // ---- right icons and labels ----
         for (i, c) in consumers.enumerated() {
