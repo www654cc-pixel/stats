@@ -19,6 +19,7 @@ public class Portal: NSStackView, Portal_p {
     
     private let header: PortalHeader
     private var grid: NSGridView?
+    private var clockViews: [ClockView] = []
     private var list: [Clock_t] = []
     
     private var widthConstraint: NSLayoutConstraint?
@@ -71,6 +72,7 @@ public class Portal: NSStackView, Portal_p {
     private func rebuildGrid() {
         self.grid?.removeFromSuperview()
         self.grid = nil
+        self.clockViews = []
         self.heightConstraint?.isActive = false
         self.heightConstraint = nil
 
@@ -99,6 +101,7 @@ public class Portal: NSStackView, Portal_p {
         var rowViews: [NSView] = []
         for clock in self.list {
             let view = ClockView(width: cardWidth, clock: clock)
+            self.clockViews.append(view)
             rowViews.append(view)
             if rowViews.count == columns {
                 grid.addRow(with: rowViews)
@@ -148,10 +151,8 @@ public class Portal: NSStackView, Portal_p {
     }
 
     private func updateExistingViews() {
-        guard let grid = self.grid else { return }
-        let views = grid.subviews.flatMap { ($0 as? NSStackView)?.subviews ?? [] }.compactMap { $0 as? ClockView }
-        for (i, clock) in self.list.enumerated() where i < views.count {
-            views[i].update(clock)
+        for (i, clock) in self.list.enumerated() where i < self.clockViews.count {
+            self.clockViews[i].update(clock)
         }
     }
 }
