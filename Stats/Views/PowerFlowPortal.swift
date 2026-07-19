@@ -53,7 +53,7 @@ internal struct PowerFlowModel {
 internal class PowerFlowPortal: NSStackView {
     private let headerHeight: CGFloat = 20
     private let barHeight: CGFloat = 13
-    private let sankeyHeight: CGFloat = 176
+    private let sankeyHeight: CGFloat = 140
     private let processesTitleHeight: CGFloat = 15
     private let processRowHeight: CGFloat = 17
     private let processesCount: Int = 3
