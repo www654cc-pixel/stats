@@ -573,10 +573,11 @@ private class ClockRow: NSStackView {
             block.spacing = 5
 
             let name = NSTextField(labelWithString: r.name)
-            name.font = .systemFont(ofSize: 10)
-            name.textColor = .secondaryLabelColor
+            name.font = r.isLocal ? .systemFont(ofSize: 10, weight: .bold) : .systemFont(ofSize: 10)
+            name.textColor = r.isLocal ? .systemBlue : .secondaryLabelColor
             let time = NSTextField(labelWithString: r.time)
-            time.font = .monospacedDigitSystemFont(ofSize: 12, weight: .semibold)
+            time.font = .monospacedDigitSystemFont(ofSize: 12, weight: r.isLocal ? .bold : .semibold)
+            if r.isLocal { time.textColor = .systemBlue }
             let delta = NSTextField(labelWithString: "")
             delta.font = .monospacedDigitSystemFont(ofSize: 9, weight: .regular)
             delta.textColor = .tertiaryLabelColor

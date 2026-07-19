@@ -85,11 +85,13 @@ public struct ClockReading {
     public var name: String
     public var time: String     // "07:04"
     public var dayDelta: Int    // calendar-day offset vs the local timezone
+    public var isLocal: Bool    // true when this entry matches the system timezone
 
-    public init(name: String, time: String, dayDelta: Int) {
+    public init(name: String, time: String, dayDelta: Int, isLocal: Bool = false) {
         self.name = name
         self.time = time
         self.dayDelta = dayDelta
+        self.isLocal = isLocal
     }
 }
 

@@ -424,7 +424,9 @@ private class ProxyNodeRow: NSStackView {
         if delay <= 0 {
             return (localizedString("timeout"), .systemRed)
         }
-        return ("\(delay) ms", delay < 150 ? .systemGreen : (delay < 300 ? .systemOrange : .systemRed))
+        // thresholds tuned for cross-border use: <100ms local-fast (green),
+        // <400ms normal intercontinental (neutral gray), >400ms genuinely slow (orange)
+        return ("\(delay) ms", delay < 100 ? .systemGreen : (delay < 400 ? .secondaryLabelColor : .systemOrange))
     }
 
     func setDelay(_ delay: Int) {

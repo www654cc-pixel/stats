@@ -450,6 +450,7 @@
 "Designed capacity" = "Designed capacity";
 "On hold" = "On hold";
 "On battery" = "On battery";
+"System idle, no power-hungry processes" = "System idle, no power-hungry processes";
 "Plugged in" = "Plugged in";
 "Charging" = "Charging";
 

@@ -72,6 +72,10 @@ internal class PowerFlowPortal: NSStackView {
     private var refreshTimer: Timer?
     private var topTicker: Int = 0
     private var topIsRunning: Bool = false
+    // EMA state for battery watts: raw Amperage×Voltage samples are instantaneous
+    // and jittery (2-3x PSTR at times); smooth them to the same time scale as the
+    // SMC power rails so the sankey roughly conserves energy.
+    private var batteryWattsEMA: Double? = nil
 
     init() {
         super.init(frame: NSRect(x: 0, y: 0, width: Constants.Popup.width, height: 0))
@@ -163,6 +167,16 @@ internal class PowerFlowPortal: NSStackView {
         var model = PowerFlowModel()
         self.readBattery(into: &model)
 
+        // smooth battery watts with an EMA (~10 s time constant at a 2 s tick);
+        // reset when the flow direction flips (charge <-> discharge)
+        let rawWatts = model.batteryWatts
+        if let ema = self.batteryWattsEMA, ema * rawWatts >= 0 {
+            self.batteryWattsEMA = 0.3 * rawWatts + 0.7 * ema
+        } else {
+            self.batteryWattsEMA = rawWatts
+        }
+        model.batteryWatts = self.batteryWattsEMA ?? rawWatts
+
         if let flow = self.sensorsPortal()?.lastPowerFlow {
             model.systemTotal = flow.systemTotal
             model.dcIn = flow.dcIn
@@ -232,12 +246,14 @@ internal class PowerFlowPortal: NSStackView {
                 model.timeToFull = t
             }
             // Apple Silicon reports capacities inside BatteryData (in mAh);
-            // the top-level MaxCapacity is just a percentage there
+            // the top-level MaxCapacity is just a percentage there.
+            // Health uses FullChargeCapacity (actual full-charge), not the
+            // optimistic NominalChargeCapacity.
             if let raw = IORegistryEntryCreateCFProperty(service, "BatteryData" as CFString, kCFAllocatorDefault, 0),
                let data = raw.takeRetainedValue() as? [String: Any],
-               let nominal = data["NominalChargeCapacity"] as? Int,
+               let full = data["FullChargeCapacity"] as? Int,
                let design = data["DesignCapacity"] as? Int, design > 0 {
-                model.health = Int((Double(nominal * 100) / Double(design)).rounded())
+                model.health = Int((Double(full * 100) / Double(design)).rounded())
             } else if let maxCap = intProp("AppleRawMaxCapacity"),
                       let design = intProp("DesignCapacity"), design > 0, maxCap > 100 {
                 model.health = Int((Double(maxCap * 100) / Double(design)).rounded())
@@ -300,9 +316,16 @@ internal class PowerFlowPortal: NSStackView {
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.topIsRunning = false
+                // hide noise: processes below 1% CPU are not worth listing
+                let busy = list.filter { $0.usage >= 1.0 }
+                if busy.isEmpty {
+                    self.processRows.first?.setIdle()
+                    for row in self.processRows.dropFirst() { row.clear() }
+                    return
+                }
                 for (i, row) in self.processRows.enumerated() {
-                    if i < list.count {
-                        row.set(list[i])
+                    if i < busy.count {
+                        row.set(busy[i])
                     } else {
                         row.clear()
                     }
@@ -814,7 +837,16 @@ private class PowerProcessRow: NSStackView {
     func set(_ process: TopProcess) {
         self.icon.image = process.icon
         self.nameField.stringValue = process.name
+        self.nameField.textColor = .labelColor
         self.valueField.stringValue = String(format: "%.1f%%", process.usage)
+    }
+
+    func setIdle() {
+        self.icon.image = NSImage(systemSymbolName: "leaf", accessibilityDescription: nil)
+        self.icon.contentTintColor = .secondaryLabelColor
+        self.nameField.stringValue = localizedString("System idle, no power-hungry processes")
+        self.nameField.textColor = .secondaryLabelColor
+        self.valueField.stringValue = ""
     }
 
     func clear() {

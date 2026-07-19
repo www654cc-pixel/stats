@@ -447,6 +447,7 @@
 "Designed capacity" = "设计容量"; // gemma4:31b
 "On hold" = "暂停"; // gemma4:31b
 "On battery" = "电池供电"; // gemma4:31b
+"System idle, no power-hungry processes" = "系统空闲，无高耗电进程";
 "Plugged in" = "已连接电源"; // gemma4:31b
 "Charging" = "充电中"; // gemma4:31b
 

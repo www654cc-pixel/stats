@@ -31,7 +31,8 @@ public class Portal: NSStackView, Portal_p, CombinedClockPortal {
             var cal = Calendar(identifier: .gregorian)
             cal.timeZone = tz
             let dayThere = cal.ordinality(of: .day, in: .era, for: now) ?? 0
-            return ClockReading(name: clock.name, time: formatter.string(from: now), dayDelta: dayThere - dayHere)
+            let isLocal = tz.secondsFromGMT(for: now) == TimeZone.current.secondsFromGMT(for: now)
+            return ClockReading(name: clock.name, time: formatter.string(from: now), dayDelta: dayThere - dayHere, isLocal: isLocal)
         }
     }
     
