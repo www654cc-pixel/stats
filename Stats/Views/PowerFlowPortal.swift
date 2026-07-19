@@ -222,6 +222,15 @@ internal class PowerFlowPortal: NSStackView {
             if let amperage = intProp("Amperage"), let voltage = intProp("Voltage") {
                 model.batteryWatts = Double(amperage) * Double(voltage) / 1_000_000 // mA x mV -> W
             }
+            // macOS 27 reports "(no estimate)" via IOPS, so the keys above read 0;
+            // the battery gas gauge still computes smoothed averages — fall back to them.
+            // 65535 (0xFFFF) is the gauge's "invalid" placeholder.
+            if model.timeToEmpty <= 0, let t = intProp("AvgTimeToEmpty"), t > 0, t < 65535 {
+                model.timeToEmpty = t
+            }
+            if model.timeToFull <= 0, let t = intProp("AvgTimeToFull"), t > 0, t < 65535 {
+                model.timeToFull = t
+            }
             // Apple Silicon reports capacities inside BatteryData (in mAh);
             // the top-level MaxCapacity is just a percentage there
             if let raw = IORegistryEntryCreateCFProperty(service, "BatteryData" as CFString, kCFAllocatorDefault, 0),
