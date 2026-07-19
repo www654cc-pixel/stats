@@ -124,6 +124,15 @@ extension AppDelegate {
             completion(NSBackgroundActivityScheduler.Result.finished)
         }
         
+        self.supportRetryActivity.interval = 60 * 30
+        self.supportRetryActivity.repeats = true
+        self.supportRetryActivity.schedule { (completion: @escaping NSBackgroundActivityScheduler.CompletionHandler) in
+            DispatchQueue.main.async {
+                self.tryToShowSupportWindow()
+            }
+            completion(NSBackgroundActivityScheduler.Result.finished)
+        }
+        
         if let updateInterval = AppUpdateInterval(rawValue: Store.shared.string(key: "update-interval", defaultValue: AppUpdateInterval.silent.rawValue)) {
             self.updateActivity.invalidate()
             self.updateActivity.repeats = true
@@ -227,7 +236,7 @@ extension AppDelegate {
     }
     
     public func checkIfShouldShowSupportWindow() {
-        if !Store.shared.exist(key: "setupProcess") || !Store.shared.exist(key: "runAtLoginInitialized") {
+        if !Store.shared.exist(key: "setupProcess") && !Store.shared.exist(key: "runAtLoginInitialized") {
             return
         }
         if SystemStats.shared.auth.hasCredentials() {
@@ -238,7 +247,11 @@ extension AppDelegate {
         let now = Int(Date().timeIntervalSince1970)
         if !Store.shared.exist(key: "support_ts") {
             Store.shared.set(key: "support_ts", value: now)
-            self.ensureSupportWindow().show()
+            return
+        }
+        
+        if Store.shared.bool(key: "support_pending", defaultValue: false) {
+            self.tryToShowSupportWindow()
             return
         }
         
@@ -249,8 +262,52 @@ extension AppDelegate {
             return
         }
         
-        Store.shared.set(key: "support_ts", value: now)
-        self.ensureSupportWindow().show()
+        self.markSupportPending()
+    }
+    
+    internal func markSupportPending() {
+        if !Store.shared.bool(key: "support_pending", defaultValue: false) {
+            Store.shared.set(key: "support_pending", value: true)
+            Store.shared.set(key: "support_pending_ts", value: Int(Date().timeIntervalSince1970))
+        }
+        self.tryToShowSupportWindow()
+    }
+    
+    public func tryToShowSupportWindow(interaction: Bool = false) {
+        guard Store.shared.bool(key: "support_pending", defaultValue: false) else { return }
+        
+        if SystemStats.shared.auth.hasCredentials() {
+            guard let plan = SystemStats.shared.plan else { return }
+            if plan != .free {
+                Store.shared.set(key: "support_pending", value: false)
+                return
+            }
+        }
+        
+        let now = Int(Date().timeIntervalSince1970)
+        let pendingTS = Store.shared.int(key: "support_pending_ts", defaultValue: now)
+        let pendingDays = (now - pendingTS) / (60 * 60 * 24)
+        
+        DispatchQueue.global(qos: .utility).async {
+            if UserContext.isScreenLocked() {
+                debug("the support window is delayed: the screen is locked")
+                return
+            }
+            if !interaction && UserContext.secondsSinceLastInput() > 60 {
+                debug("the support window is delayed: no recent user activity")
+                return
+            }
+            if !(interaction && pendingDays > 7), let reason = UserContext.busyReason() {
+                debug("the support window is delayed: \(reason)")
+                return
+            }
+            DispatchQueue.main.async {
+                guard Store.shared.bool(key: "support_pending", defaultValue: false) else { return }
+                Store.shared.set(key: "support_pending", value: false)
+                Store.shared.set(key: "support_ts", value: Int(Date().timeIntervalSince1970))
+                self.ensureSupportWindow().show()
+            }
+        }
     }
     
     private func showUpdateNotification(version: version_s) {
@@ -324,5 +381,26 @@ extension AppDelegate {
             "origin": window.frame.origin,
             "center": window.frame.width/2
         ])
+    }
+    
+    // Workaround for the WindowServer "Invalid window" log spam on macOS Tahoe (#3212, #2829).
+    //
+    // On Tahoe every layout pass on an NSStatusBarWindow schedules a tiling-constraints sync
+    // (-[NSWindow(NSFullScreen) _refreshTilingConstraints:]) that calls
+    // SLSPackagesSetWindowConstraints with the window number. A status bar window has no regular
+    // server-side window on Tahoe (the low 32 bits of its windowNumber are zero), so WindowServer
+    // rejects every call and logs "_CGXPackagesSetWindowConstraints: Invalid window" on each
+    // widget update. The gate (-[NSWindow(NSFullScreen) _needsTilingConstraintUpdate]) returns
+    // true whenever the app is inactive, which for a menu bar app is almost always.
+    //
+    // Overriding the gate on NSStatusBarWindow only (a status bar window can never be tiled)
+    // stops the sync from ever being scheduled; all other windows keep the default behavior.
+    internal func suppressStatusBarTilingConstraintUpdates() {
+        guard #available(macOS 26.0, *) else { return }
+        let selector = NSSelectorFromString("_needsTilingConstraintUpdate")
+        guard let cls = NSClassFromString("NSStatusBarWindow"),
+              let method = class_getInstanceMethod(cls, selector) else { return }
+        let block: @convention(block) (AnyObject) -> Bool = { _ in false }
+        class_addMethod(cls, selector, imp_implementationWithBlock(block), method_getTypeEncoding(method))
     }
 }

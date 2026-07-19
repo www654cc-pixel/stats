@@ -109,6 +109,12 @@
 "Finish setup" = "Завершить настройку";
 "Welcome to Stats" = "Добро пожаловать в Stats";
 "welcome_message" = "Спасибо за использование Stats, бесплатного системного монитора macOS с открытым исходным кодом для системного меню.";
+"Select preset" = "Выберите предустановку";
+"select_preset_message" = "Выберите начальный набор модулей. Все остальные параметры можно будет настроить позже в разделе «Настройки».";
+"Default" = "По умолчанию";
+"Basic" = "Базовый";
+"Recommended" = "Рекомендованный";
+"Extended" = "Расширенный";
 "Start the application automatically when starting your Mac" = "Запуск приложения автоматически при запуске Mac";
 "Do not start the application automatically when starting your Mac" = "Не запускать приложение автоматически при запуске Mac";
 "Do everything silently in the background (recommended)" = "Делать все тихо в фоновом режиме (рекомендуется)";
@@ -126,6 +132,7 @@
 "Successfully updated" = "Успешно обновлено";
 "Stats was updated to v" = "Stats обновлено до v%0";
 "Reset settings text" = "Все настройки приложения будут сброшены, и приложение будет перезапущено. Вы уверены, что хотите это сделать?";
+"Deregister text" = "Компьютер будет удален из System Stats, и вы выйдете из системы. Вы уверены, что хотите это сделать?";
 "Support text" = "Спасибо за использование Stats.\n\n Поддержание и улучшение этого проекта с открытым исходным кодом требует времени и ресурсов. Ваша поддержка помогает нам продолжать предоставлять бесплатное и надежное приложение для всех.\n\nЕсли вы находите Stats полезным, пожалуйста, подумайте о том, чтобы сделать взнос. Каждый маленький кусочек помогает!";
 
 // Settings
@@ -333,10 +340,26 @@
 "Disk usage" = "Использование диска";
 "Total read" = "Всего прочитано";
 "Total written" = "Всего записано";
+"File system" = "Файловая система";
+"Connection type" = "Тип подключения";
+"BSD name" = "BSD-имя";
+"Encrypted" = "Зашифрован";
+"Writable" = "Доступен для записи";
 "Drives" = "Диски";
 "SMART data" = "SMART данные";
+"ATA SMART data" = "ATA SMART данные";
 "Power cycles" = "Количество циклов";
 "Power on hours" = "Часы работы";
+"Critical warning" = "Критическое предупреждение";
+"Available spare" = "Доступный резерв";
+"Unsafe shutdowns" = "Небезопасные отключения";
+"Media errors" = "Ошибки носителя";
+"Threshold" = "Пороговое значение";
+"Spare below threshold" = "Резерв ниже порога";
+"Temperature out of range" = "Температура вне диапазона";
+"Reliability degraded" = "Надёжность снижена";
+"Read-only mode" = "Режим только для чтения";
+"Backup failed" = "Ошибка резервного копирования";
 
 // Sensors
 "Celsius" = "Цельсия";

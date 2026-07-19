@@ -87,12 +87,21 @@ internal class UsageReader: Reader<Battery_Usage> {
                 
                 self.usage.cycles = self.getIntValue("CycleCount" as CFString) ?? 0
                 
-                self.usage.currentCapacity = self.getIntValue("AppleRawCurrentCapacity" as CFString) ?? 0
-                self.usage.designedCapacity = self.getIntValue("DesignCapacity" as CFString) ?? 1
+                let batteryData = self.getDictValue("BatteryData" as CFString)
+                
+                self.usage.currentCapacity = self.getIntValue("AppleRawCurrentCapacity" as CFString) ?? batteryData?["RemainingCapacity"] as? Int ?? 0
+                self.usage.designedCapacity = self.getIntValue("DesignCapacity" as CFString) ?? batteryData?["DesignCapacity"] as? Int ?? 1
                 if self.usage.designedCapacity == 0 {
                     self.usage.designedCapacity = 1
                 }
-                self.usage.maxCapacity = self.getIntValue((isARM ? "AppleRawMaxCapacity" : "MaxCapacity") as CFString) ?? 1
+                self.usage.maxCapacity = self.getIntValue((isARM ? "AppleRawMaxCapacity" : "MaxCapacity") as CFString)
+                    ?? self.getIntValue("NominalChargeCapacity" as CFString)
+                    ?? batteryData?["NominalChargeCapacity"] as? Int
+                    ?? batteryData?["FullChargeCapacity"] as? Int
+                    ?? 1
+                if self.usage.maxCapacity == 0 {
+                    self.usage.maxCapacity = 1
+                }
                 if !isARM {
                     self.usage.state = list[kIOPSBatteryHealthKey] as? String
                 }
@@ -104,10 +113,8 @@ internal class UsageReader: Reader<Battery_Usage> {
                 
                 var ACwatts: Int = 0
                 if let ACDetails = IOPSCopyExternalPowerAdapterDetails() {
-                    if let ACList = ACDetails.takeRetainedValue() as? [String: Any] {
-                        guard let watts = ACList[kIOPSPowerAdapterWattsKey] as? Int else {
-                            return
-                        }
+                    if let ACList = ACDetails.takeRetainedValue() as? [String: Any],
+                       let watts = ACList[kIOPSPowerAdapterWattsKey] as? Int {
                         ACwatts = watts
                     }
                 }
@@ -151,6 +158,13 @@ internal class UsageReader: Reader<Battery_Usage> {
     private func getDoubleValue(_ identifier: CFString) -> Double? {
         if let value = IORegistryEntryCreateCFProperty(self.service, identifier, kCFAllocatorDefault, 0) {
             return value.takeRetainedValue() as? Double
+        }
+        return nil
+    }
+
+    private func getDictValue(_ identifier: CFString) -> [String: Any]? {
+        if let value = IORegistryEntryCreateCFProperty(self.service, identifier, kCFAllocatorDefault, 0) {
+            return value.takeRetainedValue() as? [String: Any]
         }
         return nil
     }
@@ -206,7 +220,7 @@ public class ProcessReader: Reader<[TopProcess]> {
         }
         
         let task = Process()
-        task.launchPath = "/usr/bin/top"
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/top")
         task.arguments = ["-o", "power", "-l", "2", "-n", "\(self.numberOfProcesses)", "-stats", "pid,command,power"]
         
         let outputPipe = Pipe()

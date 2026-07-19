@@ -109,6 +109,12 @@
 "Finish setup" = "Finalitzar configuració";
 "Welcome to Stats" = "Benvingut/Benvinguda a Stats";
 "welcome_message" = "Gràcies per fer servir Stats, una aplicació de monitorització per a la teva barra de menús de macOS de codi lliure.";
+"Select preset" = "Selecciona la preconfiguració"; // gemma4:31b
+"select_preset_message" = "Tria un conjunt inicial de mòduls. Pots personalitzar-ho tot més tard als Ajustos."; // gemma4:31b
+"Default" = "Per defecte"; // gemma4:31b
+"Basic" = "Bàsic"; // gemma4:31b
+"Recommended" = "Recomanat"; // gemma4:31b
+"Extended" = "Estès"; // gemma4:31b
 "Start the application automatically when starting your Mac" = "Iniciar automàticament l'aplicació al iniciar el teu Mac";
 "Do not start the application automatically when starting your Mac" = "No iniciar automàticament l'aplicació al iniciar el teu Mac";
 "Do everything silently in the background (recommended)" = "Fer tot silenciosament al radere (recomanat)";
@@ -126,6 +132,7 @@
 "Successfully updated" = "Actualització completada amb èxit";
 "Stats was updated to v" = "Stats s'ha actualitzat a v%0";
 "Reset settings text" = "Tota la configuració actual serà esborrada i l'aplicació es reiniciarà. Estàs segur/segura de voler fer això?";
+"Deregister text" = "L'ordinador serà desregistrat de System Stats i tancaràs la sessió. Estàs segur que vols fer això?"; // gemma4:31b-it-qat
 "Support text" = "Gràcies per utilitzar Stats!\n\n Mantenir i millorar aquest projecte de codi obert requereix temps i recursos. El vostre suport ens ajuda a continuar oferint una aplicació gratuïta i fiable per a tothom.\n\nSi trobeu útils les estadístiques, penseu a fer una contribució. Cada petita mica ajuda!";
 
 // Settings
@@ -333,10 +340,26 @@
 "Disk usage" = "Ús del disc";
 "Total read" = "Total llegit";
 "Total written" = "Total escrit";
+"File system" = "Sistema de fitxers"; // gemma4:31b-it-qat
+"Connection type" = "Tipus de connexió"; // gemma4:31b-it-qat
+"BSD name" = "Nom BSD"; // gemma4:31b-it-qat
+"Encrypted" = "Xifrat"; // gemma4:31b-it-qat
+"Writable" = "Escriptible"; // gemma4:31b-it-qat
 "Drives" = "Discos"; // translategemma:4b
 "SMART data" = "Dades SMART"; // translategemma:4b
+"ATA SMART data" = "Dades ATA SMART"; // gemma4:31b
 "Power cycles" = "Cicles d'alimentació"; // gemma4:31b
 "Power on hours" = "Hores de funcionament"; // gemma4:31b
+"Critical warning" = "Avís crític"; // gemma4:31b-it-qat
+"Available spare" = "Reserva disponible"; // gemma4:31b-it-qat
+"Unsafe shutdowns" = "Apagades incorrectes"; // gemma4:31b-it-qat
+"Media errors" = "Errors del suport"; // gemma4:31b-it-qat
+"Threshold" = "Llindar"; // gemma4:31b-it-qat
+"Spare below threshold" = "Reserva per sota del llindar"; // gemma4:31b-it-qat
+"Temperature out of range" = "Temperatura fora de rang"; // gemma4:31b-it-qat
+"Reliability degraded" = "Fiabilitat degradada"; // gemma4:31b-it-qat
+"Read-only mode" = "Mode només de lectura"; // gemma4:31b-it-qat
+"Backup failed" = "Còpia de seguretat fallida"; // gemma4:31b-it-qat
 
 // Sensors
 "Celsius" = "Celsius";

@@ -36,8 +36,8 @@ class SettingsWindow: NSWindow, NSWindowDelegate, NSToolbarDelegate {
     init() {
         super.init(
             contentRect: NSRect(
-                x: NSScreen.main!.frame.width - SettingsWindow.size.width,
-                y: NSScreen.main!.frame.height - SettingsWindow.size.height,
+                x: 0,
+                y: 0,
                 width: SettingsWindow.size.width,
                 height: SettingsWindow.size.height
             ),
@@ -113,7 +113,7 @@ class SettingsWindow: NSWindow, NSWindowDelegate, NSToolbarDelegate {
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         if event.type == NSEvent.EventType.keyDown && event.modifierFlags.contains(.command) {
             if event.keyCode == 12 || event.keyCode == 13 {
-                self.setIsVisible(false)
+                self.close()
                 return true
             } else if event.keyCode == 46 {
                 self.miniaturize(event)
@@ -228,9 +228,13 @@ class SettingsWindow: NSWindow, NSWindowDelegate, NSToolbarDelegate {
     }
     
     private func positionCenter() {
+        guard let screen = NSScreen.main else {
+            self.center()
+            return
+        }
         self.setFrameOrigin(NSPoint(
-            x: (NSScreen.main!.frame.width - SettingsWindow.size.width)/2,
-            y: ((NSScreen.main!.frame.height - SettingsWindow.size.height)/1.75)
+            x: (screen.frame.width - SettingsWindow.size.width)/2,
+            y: ((screen.frame.height - SettingsWindow.size.height)/1.75)
         ))
     }
 }

@@ -63,8 +63,9 @@ extension String: @retroactive LocalizedError {
         if let match = regex.firstMatch(in: self, options: [], range: range) {
             if let range = Range(match.range, in: self) {
                 let cropped = String(self[range]).trimmingCharacters(in: .whitespaces)
-                let remaining = self.replacingOccurrences(of: cropped, with: "", options: .regularExpression).trimmingCharacters(in: .whitespaces)
-                return (cropped, remaining)
+                var remaining = self
+                remaining.removeSubrange(range)
+                return (cropped, remaining.trimmingCharacters(in: .whitespaces))
             }
         }
 
@@ -75,13 +76,11 @@ extension String: @retroactive LocalizedError {
         guard let regex = RegexCache.shared.regex(pattern) else {
             return ""
         }
-        let stringRange = NSRange(location: 0, length: self.utf16.count)
+        let stringRange = NSRange(self.startIndex..., in: self)
 
-        if let searchRange = regex.firstMatch(in: self, options: [], range: stringRange) {
-            let start = self.index(self.startIndex, offsetBy: searchRange.range.lowerBound)
-            let end = self.index(self.startIndex, offsetBy: searchRange.range.upperBound)
-            let value  = String(self[start..<end]).trimmingCharacters(in: .whitespaces)
-            return value.trimmingCharacters(in: .whitespaces)
+        if let searchRange = regex.firstMatch(in: self, options: [], range: stringRange),
+           let matchRange = Range(searchRange.range, in: self) {
+            return String(self[matchRange]).trimmingCharacters(in: .whitespaces)
         }
 
         return ""
@@ -709,6 +708,7 @@ public class KeyboardShartcutView: NSStackView {
     private var keyCodes: [UInt16] = []
     private var value: [UInt16] = []
     private var interaction: Bool = false
+    private var monitor: Any? = nil
     
     public init(callback: @escaping (_ value: [UInt16]) -> Void, value: [UInt16]) {
         self.callback = callback
@@ -733,7 +733,7 @@ public class KeyboardShartcutView: NSStackView {
         self.startButton = startButton
         self.stopButton = stopButton
         
-        NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { [weak self] event in
+        self.monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { [weak self] event in
             self?.handleKeyEvent(event)
             return event
         }
@@ -741,6 +741,12 @@ public class KeyboardShartcutView: NSStackView {
     
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+    
+    deinit {
+        if let monitor = self.monitor {
+            NSEvent.removeMonitor(monitor)
+        }
     }
     
     @objc private func startListening() {

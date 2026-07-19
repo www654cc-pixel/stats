@@ -15,6 +15,7 @@ import ServiceManagement
 import UserNotifications
 import WebKit
 import Metal
+import IOKit.pwr_mgt
 
 public struct LaunchAtLogin {
     private static let id = "\(Bundle.main.bundleIdentifier!).LaunchAtLogin"
@@ -154,21 +155,20 @@ public struct Units {
             return (self.formatSpeedValue(value), "\(speedPrefix)\(stringBase)/s")
         }
         
-        switch bytes {
-        case 0..<1_000:
+        let value: Double = Double(bytes) * multiplier
+        switch value {
+        case ..<1_000:
             return ("0", "K\(stringBase)/s")
-        case 1_000..<(1_000 * 1_000):
-            return (String(format: "%.0f", kilobytes*multiplier), "K\(stringBase)/s")
-        case 1_000..<(1_000 * 1_000 * 100):
-            return (String(format: "%.1f", megabytes*multiplier), "M\(stringBase)/s")
-        case (1_000 * 1_000 * 100)..<(1_000 * 1_000 * 1_000):
-            return (String(format: "%.0f", megabytes*multiplier), "M\(stringBase)/s")
-        case (1_000 * 1_000 * 1_000)..<(1_000 * 1_000 * 1_000 * 1_000):
-            return (String(format: "%.1f", gigabytes*multiplier), "G\(stringBase)/s")
-        case (1_000 * 1_000 * 1_000 * 1_000)...Int64.max:
-            return (String(format: "%.1f", terabytes*multiplier), "T\(stringBase)/s")
+        case 1_000..<1_000_000:
+            return (String(format: "%.0f", value/1_000), "K\(stringBase)/s")
+        case 1_000_000..<100_000_000:
+            return (String(format: "%.1f", value/1_000_000), "M\(stringBase)/s")
+        case 100_000_000..<1_000_000_000:
+            return (String(format: "%.0f", value/1_000_000), "M\(stringBase)/s")
+        case 1_000_000_000..<1_000_000_000_000:
+            return (String(format: "%.1f", value/1_000_000_000), "G\(stringBase)/s")
         default:
-            return (String(format: "%.0f", kilobytes*multiplier), "K\(stringBase)B/s")
+            return (String(format: "%.1f", value/1_000_000_000_000), "T\(stringBase)/s")
         }
     }
     
@@ -650,12 +650,17 @@ public func toggleNSControlState(_ control: NSControl?, state: NSControl.StateVa
 
 public func syncShell(_ args: String) -> String {
     let task = Process()
-    task.launchPath = "/bin/sh"
+    task.executableURL = URL(fileURLWithPath: "/bin/sh")
     task.arguments = ["-c", args]
     let pipe = Pipe()
     
     task.standardOutput = pipe
-    task.launch()
+    do {
+        try task.run()
+    } catch let err {
+        error("syncShell: \(err.localizedDescription)")
+        return ""
+    }
     task.waitUntilExit()
     
     let data = pipe.fileHandleForReading.readDataToEndOfFile()
@@ -1003,7 +1008,7 @@ internal class WidgetLabelView: NSView {
 
 public func process(path: String, arguments: [String]) -> String? {
     let task = Process()
-    task.launchPath = path
+    task.executableURL = URL(fileURLWithPath: path)
     task.arguments = arguments
     
     let outputPipe = Pipe()
@@ -1107,7 +1112,7 @@ public class SMCHelper {
     public func checkForUpdate() {
         if #available(macOS 13, *) {
             self.cleanupLegacyInstall()
-            return
+            guard SMAppService.daemon(plistName: self.plistName).status == .enabled else { return }
         }
         
         let helperURL = Bundle.main.bundleURL.appendingPathComponent("Contents/Library/LaunchServices/eu.exelban.Stats.SMC.Helper")
@@ -1117,7 +1122,7 @@ public class SMCHelper {
         
         helper.version { installedHelperVersion in
             guard installedHelperVersion != helperVersion else { return }
-            print("new version of SMC helper is detected, going to update...")
+            print("new version of SMC helper is detected (\(installedHelperVersion) -> \(helperVersion)), going to update...")
             self.uninstall(silent: true)
             self.install { state in
                 if case .enabled = state {
@@ -1887,7 +1892,7 @@ public class StepperInput: NSStackView, NSTextFieldDelegate, PreferencesSwitchWi
     }
     
     @objc private func onStepperChange(_ sender: NSStepper) {
-        let value = Int(sender.doubleValue*100)
+        let value = Int((sender.doubleValue*100).rounded())
         self.valueView.stringValue = "\(value)"
         self.callback(value)
     }
@@ -1955,7 +1960,7 @@ public class HelpHUD: NSPanel {
     public func show() {
         if self.contentView as? WKWebView == nil {
             let webView = WKWebView()
-            webView.setValue(false, forKey: "drawsBackground")
+            webView.underPageBackgroundColor = .clear
             webView.loadHTMLString("<html><body style='color: #ffffff;margin: 10px;'>\(self.text)</body></html>", baseURL: nil)
             self.contentView = webView
         }
@@ -2385,5 +2390,48 @@ public class SeparatorView: NSStackView {
         view.setContentHuggingPriority(.defaultLow, for: .horizontal)
         view.heightAnchor.constraint(equalToConstant: 1).isActive = true
         return view
+    }
+}
+
+public struct UserContext {
+    public static func isScreenLocked() -> Bool {
+        guard let dict = CGSessionCopyCurrentDictionary() as NSDictionary? else { return false }
+        return (dict["CGSSessionScreenIsLocked"] as? Bool) ?? false
+    }
+    
+    public static func secondsSinceLastInput() -> Double {
+        let types: [CGEventType] = [.keyDown, .mouseMoved, .leftMouseDown, .rightMouseDown, .otherMouseDown, .scrollWheel]
+        return types.map { CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: $0) }.min() ?? 0
+    }
+    
+    public static func busyReason() -> String? {
+        if self.isFocusEnabled() {
+            return "focus is enabled"
+        }
+        if self.isDisplaySleepPrevented() {
+            return "display sleep is prevented"
+        }
+        return nil
+    }
+    
+    private static func isDisplaySleepPrevented() -> Bool {
+        var raw: Unmanaged<CFDictionary>?
+        guard IOPMCopyAssertionsStatus(&raw) == kIOReturnSuccess,
+              let dict = raw?.takeRetainedValue() as? [String: Int] else { return false }
+        let types = [kIOPMAssertionTypePreventUserIdleDisplaySleep as String, kIOPMAssertionTypeNoDisplaySleep as String]
+        return types.contains { (dict[$0] ?? 0) > 0 }
+    }
+    
+    private static func isFocusEnabled() -> Bool {
+        let path = NSHomeDirectory() + "/Library/DoNotDisturb/DB/Assertions.json"
+        if let data = FileManager.default.contents(atPath: path) {
+            guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let list = json["data"] as? [[String: Any]] else { return false }
+            return list.contains { entry in
+                guard let records = entry["storeAssertionRecords"] as? [[String: Any]] else { return false }
+                return !records.isEmpty
+            }
+        }
+        return CFPreferencesCopyAppValue("NSStatusItem Visible FocusModes" as CFString, "com.apple.controlcenter" as CFString) as? Bool ?? false
     }
 }

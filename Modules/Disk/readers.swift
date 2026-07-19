@@ -32,6 +32,18 @@ let kIOCFPlugInInterfaceID = CFUUIDGetConstantUUIDWithBytes(nil,
                                                             0x91, 0xD4, 0x00, 0x50,
                                                             0xE4, 0xC6, 0x42, 0x6F
 )
+let kIOATASMARTUserClientTypeID = CFUUIDGetConstantUUIDWithBytes(nil,
+                                                                 0x24, 0x51, 0x4B, 0x7A,
+                                                                 0x28, 0x04, 0x11, 0xD6,
+                                                                 0x8A, 0x02, 0x00, 0x30,
+                                                                 0x65, 0x70, 0x48, 0x66
+)
+let kIOATASMARTInterfaceID = CFUUIDGetConstantUUIDWithBytes(nil,
+                                                            0x08, 0xAB, 0xE2, 0x1C,
+                                                            0x20, 0xD4, 0x11, 0xD6,
+                                                            0x8D, 0xF6, 0x00, 0x03,
+                                                            0x93, 0x5A, 0x76, 0xB2
+)
 
 internal class CapacityReader: Reader<Disks> {
     internal var list: Disks = Disks()
@@ -39,8 +51,13 @@ internal class CapacityReader: Reader<Disks> {
     private var SMART: Bool {
         Store.shared.bool(key: "\(ModuleType.disk.stringValue)_SMART", defaultValue: true)
     }
+    private var ATASMART: Bool {
+        Store.shared.bool(key: "\(ModuleType.disk.stringValue)_ATASMART", defaultValue: false)
+    }
     
     private var purgableSpace: [URL: (Date, Int64)] = [:]
+    private var smartTotals: [String: (read: Int64, written: Int64)] = [:]
+    private var smartEnableAttempted: Set<String> = []
     
     public override func read() {
         let keys: [URLResourceKey] = [.volumeNameKey]
@@ -64,16 +81,21 @@ internal class CapacityReader: Reader<Disks> {
                         
                         if let d = self.list.first(where: { $0.BSDName == BSDName}), let idx = self.list.index(where: { $0.BSDName == BSDName}) {
                             if d.removable && !removableState {
+                                if d.parent != 0 { IOObjectRelease(d.parent) }
                                 self.list.remove(at: idx)
                                 continue
                             }
                             
-                            if let path = d.path {
-                                self.list.updateFreeSize(idx, newValue: self.freeDiskSpaceInBytes(path))
-                                self.list.updateSMARTData(idx, smart: self.getSMARTDetails(for: BSDName))
+                            if driveIdentityChanged(d, url, disk) {
+                                if d.parent != 0 { IOObjectRelease(d.parent) }
+                                self.list.remove(at: idx)
+                            } else {
+                                if let path = d.path {
+                                    self.list.updateFreeSize(idx, newValue: self.freeDiskSpaceInBytes(path))
+                                    self.list.updateSMARTData(idx, smart: self.getSMARTDetails(for: BSDName))
+                                }
+                                continue
                             }
-                            
-                            continue
                         }
                         
                         if var d = driveDetails(disk, removableState: removableState) {
@@ -82,7 +104,10 @@ internal class CapacityReader: Reader<Disks> {
                                 d.size = self.totalDiskSpaceInBytes(path)
                             }
                             d.smart = self.getSMARTDetails(for: BSDName)
-                            guard d.size != 0 else { continue }
+                            guard d.size != 0 else {
+                                if d.parent != 0 { IOObjectRelease(d.parent) }
+                                continue
+                            }
                             self.list.append(d)
                             self.list.sort()
                         }
@@ -93,6 +118,8 @@ internal class CapacityReader: Reader<Disks> {
         
         active.difference(from: self.list.map{ $0.BSDName }).forEach { (BSDName: String) in
             if let idx = self.list.index(where: { $0.BSDName == BSDName }) {
+                let parent = self.list.array[idx].parent
+                if parent != 0 { IOObjectRelease(parent) }
                 self.list.remove(at: idx)
             }
         }
@@ -106,22 +133,22 @@ internal class CapacityReader: Reader<Disks> {
         
         var stat = statfs()
         if statfs(path.path, &stat) == 0 {
+            let total = Int64(stat.f_blocks) * Int64(stat.f_bsize)
+            let free = Int64(stat.f_bfree) * Int64(stat.f_bsize)
+            let used = total - free
+            
             var purgeable: Int64 = 0
-            if self.purgableSpace[path] == nil {
+            if let pair = self.purgableSpace[path], Date().timeIntervalSince(pair.0) <= 30 {
+                purgeable = pair.1
+            } else {
                 let value = CSDiskSpaceGetRecoveryEstimate(path as NSURL)
-                purgeable = Int64(value)
-                self.purgableSpace[path] = (Date(), purgeable)
-            } else if let pair = self.purgableSpace[path] {
-                let delta = Date().timeIntervalSince(pair.0)
-                if delta > 30 {
-                    let value = CSDiskSpaceGetRecoveryEstimate(path as NSURL)
+                if used > 0 && value <= UInt64(used) {
                     purgeable = Int64(value)
-                    self.purgableSpace[path] = (Date(), purgeable)
-                } else {
-                    purgeable = pair.1
                 }
+                self.purgableSpace[path] = (Date(), purgeable)
             }
-            return (Int64(stat.f_bfree) * Int64(stat.f_bsize)) + Int64(purgeable)
+            
+            return free + purgeable
         }
         
         do {
@@ -165,15 +192,23 @@ internal class CapacityReader: Reader<Disks> {
         guard disk != kIOReturnSuccess else { return nil }
         defer { IOObjectRelease(disk) }
         
-        var parent = disk
         while IOObjectConformsTo(disk, kIOBlockStorageDeviceClass) == 0 {
+            var parent: io_registry_entry_t = 0
             let error = IORegistryEntryGetParentEntry(disk, kIOServicePlane, &parent)
             if error != kIOReturnSuccess || parent == kIOReturnSuccess { return nil }
+            IOObjectRelease(disk)
             disk = parent
         }
         
-        guard IOObjectConformsTo(disk, kIOBlockStorageDeviceClass) > 0,
-              let raw = IORegistryEntryCreateCFProperty(disk, "NVMe SMART Capable" as CFString, kCFAllocatorDefault, 0),
+        guard IOObjectConformsTo(disk, kIOBlockStorageDeviceClass) > 0 else { return nil }
+        
+        if let smart = self.getNVMeSMART(for: disk) { return smart }
+        if self.ATASMART, let smart = self.getATASMART(for: disk, BSDName: BSDName) { return smart }
+        return nil
+    }
+    
+    private func getNVMeSMART(for disk: io_object_t) -> smart_t? {
+        guard let raw = IORegistryEntryCreateCFProperty(disk, "NVMe SMART Capable" as CFString, kCFAllocatorDefault, 0),
               let val = raw.takeRetainedValue() as? Bool, val else {
             return nil
         }
@@ -218,6 +253,8 @@ internal class CapacityReader: Reader<Disks> {
         
         let powerCycles = withUnsafeBytes(of: smartData.power_cycles) { $0.load(as: UInt32.self) }
         let powerOnHours = withUnsafeBytes(of: smartData.power_on_hours) { $0.load(as: UInt32.self) }
+        let unsafeShutdowns = withUnsafeBytes(of: smartData.unsafe_shutdowns) { $0.load(as: UInt32.self) }
+        let mediaErrors = withUnsafeBytes(of: smartData.media_errors) { $0.load(as: UInt32.self) }
         
         return smart_t(
             temperature: Int(UInt16(bigEndian: temperature) - 273),
@@ -225,7 +262,156 @@ internal class CapacityReader: Reader<Disks> {
             totalRead: dataUnitsRead * bytesPerDataUnit,
             totalWritten: dataUnitsWritten * bytesPerDataUnit,
             powerCycles: Int(powerCycles),
-            powerOnHours: Int(powerOnHours)
+            powerOnHours: Int(powerOnHours),
+            criticalWarning: Int(smartData.critical_warning),
+            availableSpare: Int(smartData.avail_spare),
+            spareThreshold: Int(smartData.spare_thresh),
+            unsafeShutdowns: Int(unsafeShutdowns),
+            mediaErrors: Int64(mediaErrors)
+        )
+    }
+    
+    private func getATASMART(for disk: io_object_t, BSDName: String) -> smart_t? {
+        guard let raw = IORegistryEntryCreateCFProperty(disk, "SMART Capable" as CFString, kCFAllocatorDefault, 0),
+              let val = raw.takeRetainedValue() as? Bool, val else {
+            return nil
+        }
+        
+        var pluginInterface: UnsafeMutablePointer<UnsafeMutablePointer<IOCFPlugInInterface>?>?
+        var smartInterface: UnsafeMutablePointer<UnsafeMutablePointer<IOATASMARTInterface>?>?
+        var score: Int32 = 0
+        
+        var result = IOCreatePlugInInterfaceForService(disk, kIOATASMARTUserClientTypeID, kIOCFPlugInInterfaceID, &pluginInterface, &score)
+        guard result == kIOReturnSuccess else { return nil }
+        defer {
+            if pluginInterface != nil {
+                IODestroyPlugInInterface(pluginInterface)
+            }
+        }
+        
+        result = withUnsafeMutablePointer(to: &smartInterface) {
+            $0.withMemoryRebound(to: Optional<LPVOID>.self, capacity: 1) {
+                pluginInterface?.pointee?.pointee.QueryInterface(pluginInterface, CFUUIDGetUUIDBytes(kIOATASMARTInterfaceID), $0) ?? KERN_NOT_FOUND
+            }
+        }
+        
+        guard result == kIOReturnSuccess else { return nil }
+        defer {
+            if smartInterface != nil {
+                _ = pluginInterface?.pointee?.pointee.Release(smartInterface)
+            }
+        }
+        
+        guard let smart = smartInterface?.pointee else { return nil }
+        
+        var smartData = ATASMARTData()
+        var readResult = smart.pointee.SMARTReadData(smartInterface, &smartData)
+        if readResult != kIOReturnSuccess && !self.smartEnableAttempted.contains(BSDName) {
+            self.smartEnableAttempted.insert(BSDName)
+            _ = smart.pointee.SMARTEnableDisableOperations(smartInterface, true)
+            readResult = smart.pointee.SMARTReadData(smartInterface, &smartData)
+        }
+        guard readResult == kIOReturnSuccess else { return nil }
+        
+        var attributes: [Int: (current: Int, raw: [UInt8])] = [:]
+        withUnsafeBytes(of: &smartData) { buffer in
+            for i in 0..<30 {
+                let offset = 2 + i * 12
+                let id = Int(buffer[offset])
+                if id == 0 { continue }
+                let current = Int(buffer[offset + 3])
+                var rawBytes: [UInt8] = []
+                for j in 0..<6 {
+                    rawBytes.append(buffer[offset + 5 + j])
+                }
+                attributes[id] = (current, rawBytes)
+            }
+        }
+        
+        func rawValue(_ id: Int, bytes count: Int = 6) -> UInt64? {
+            guard let attribute = attributes[id] else { return nil }
+            var value: UInt64 = 0
+            for i in 0..<min(count, attribute.raw.count) {
+                value |= UInt64(attribute.raw[i]) << (8 * i)
+            }
+            return value
+        }
+        
+        var temperature = 0
+        if let temp = rawValue(194, bytes: 1) ?? rawValue(190, bytes: 1) {
+            temperature = Int(temp)
+        }
+        
+        var life = 100
+        for id in [231, 202, 177, 173, 169, 233] {
+            if let attribute = attributes[id] {
+                life = min(max(attribute.current, 0), 100)
+                break
+            }
+        }
+        
+        let bytesPerLBA: Int64 = 512
+        
+        var deviceRead: Int64?
+        var deviceWritten: Int64?
+        
+        let pageCount = 8
+        let logSize = 512 * pageCount
+        var logBuffer = [UInt8](repeating: 0, count: logSize)
+        let logResult = logBuffer.withUnsafeMutableBytes {
+            smart.pointee.SMARTReadLogAtAddress(smartInterface, 0x04, $0.baseAddress, UInt32(logSize))
+        }
+        if logResult == kIOReturnSuccess {
+            func deviceStatistic(page: Int, offset: Int) -> UInt64? {
+                let base = page * 512 + offset
+                guard base + 8 <= logBuffer.count else { return nil }
+                var value: UInt64 = 0
+                for i in 0..<8 {
+                    value |= UInt64(logBuffer[base + i]) << (8 * i)
+                }
+                guard (value & (UInt64(1) << 63)) != 0, (value & (UInt64(1) << 62)) != 0 else { return nil }
+                return value & 0x0000_FFFF_FFFF_FFFF
+            }
+            
+            if let written = deviceStatistic(page: 1, offset: 0x18) {
+                let (bytes, overflow) = Int64(written).multipliedReportingOverflow(by: bytesPerLBA)
+                if !overflow {
+                    deviceWritten = bytes
+                }
+            }
+            if let read = deviceStatistic(page: 1, offset: 0x28) {
+                let (bytes, overflow) = Int64(read).multipliedReportingOverflow(by: bytesPerLBA)
+                if !overflow {
+                    deviceRead = bytes
+                }
+            }
+            if let used = deviceStatistic(page: 7, offset: 0x08) {
+                life = max(0, 100 - Int(used & 0xFF))
+            }
+        }
+        
+        if deviceRead != nil || deviceWritten != nil {
+            let cached = self.smartTotals[BSDName]
+            self.smartTotals[BSDName] = (
+                read: deviceRead ?? cached?.read ?? 0,
+                written: deviceWritten ?? cached?.written ?? 0
+            )
+        }
+        
+        let totalRead = deviceRead ?? self.smartTotals[BSDName]?.read ?? Int64(rawValue(242) ?? 0) * bytesPerLBA
+        let totalWritten = deviceWritten ?? self.smartTotals[BSDName]?.written ?? Int64(rawValue(241) ?? 0) * bytesPerLBA
+        
+        let errorCounts = [rawValue(5), rawValue(197), rawValue(198)].compactMap({ $0 })
+
+        return smart_t(
+            temperature: temperature,
+            life: life,
+            totalRead: totalRead,
+            totalWritten: totalWritten,
+            powerCycles: Int(rawValue(12, bytes: 4) ?? 0),
+            powerOnHours: Int(rawValue(9, bytes: 4) ?? 0),
+            unsafeShutdowns: rawValue(174, bytes: 4).map({ Int($0) }),
+            mediaErrors: errorCounts.isEmpty ? nil : Int64(errorCounts.reduce(0, +))
         )
     }
     
@@ -275,12 +461,18 @@ internal class ActivityReader: Reader<Disks> {
                         
                         if let d = self.list.first(where: { $0.BSDName == BSDName}), let idx = self.list.index(where: { $0.BSDName == BSDName}) {
                             if d.removable && !removableState {
+                                if d.parent != 0 { IOObjectRelease(d.parent) }
                                 self.list.remove(at: idx)
                                 continue
                             }
                             
-                            self.driveStats(idx, d)
-                            continue
+                            if driveIdentityChanged(d, url, disk) {
+                                if d.parent != 0 { IOObjectRelease(d.parent) }
+                                self.list.remove(at: idx)
+                            } else {
+                                self.driveStats(idx, d)
+                                continue
+                            }
                         }
                         
                         if let d = driveDetails(disk, removableState: removableState) {
@@ -294,6 +486,8 @@ internal class ActivityReader: Reader<Disks> {
         
         active.difference(from: self.list.map{ $0.BSDName }).forEach { (BSDName: String) in
             if let idx = self.list.index(where: { $0.BSDName == BSDName }) {
+                let parent = self.list.array[idx].parent
+                if parent != 0 { IOObjectRelease(parent) }
                 self.list.remove(at: idx)
             }
         }
@@ -324,6 +518,18 @@ internal class ActivityReader: Reader<Disks> {
         
         return
     }
+}
+
+private func driveIdentityChanged(_ d: drive, _ url: URL, _ disk: DADisk) -> Bool {
+    if d.path?.path != url.path {
+        return true
+    }
+    if let description = DADiskCopyDescription(disk) as? [String: AnyObject],
+       let kind = description[kDADiskDescriptionVolumeKindKey as String] as? String,
+       kind != d.fileSystem {
+        return true
+    }
+    return false
 }
 
 private func driveDetails(_ disk: DADisk, removableState: Bool) -> drive? {
@@ -385,6 +591,12 @@ private func driveDetails(_ disk: DADisk, removableState: Bool) -> drive? {
             if let volumeKind = dict[kDADiskDescriptionVolumeKindKey as String] as? String {
                 d.fileSystem = volumeKind
             }
+            if let writable = dict[kDADiskDescriptionMediaWritableKey as String] as? Bool {
+                d.writable = writable
+            }
+            if let encrypted = dict[kDADiskDescriptionMediaEncryptedKey as String] as? Bool {
+                d.encrypted = encrypted
+            }
         }
     }
     
@@ -396,8 +608,12 @@ private func driveDetails(_ disk: DADisk, removableState: Bool) -> drive? {
     }
     
     let partitionLevel = d.BSDName.filter { "0"..."9" ~= $0 }.count
-    if let parent = getDeviceIOParent(DADiskCopyIOMedia(disk), level: Int(partitionLevel)) {
-        d.parent = parent
+    let media = DADiskCopyIOMedia(disk)
+    if media != 0 {
+        if let parent = getDeviceIOParent(media, level: Int(partitionLevel)) {
+            d.parent = parent
+        }
+        IOObjectRelease(media)
     }
     
     return d
@@ -411,9 +627,14 @@ public func getDeviceIOParent(_ obj: io_registry_entry_t, level: Int) -> io_regi
         return nil
     }
     
-    for _ in 1...level where IORegistryEntryGetParentEntry(parent, kIOServicePlane, &parent) != KERN_SUCCESS {
+    for _ in 1...level {
+        var next: io_registry_entry_t = 0
+        let result = IORegistryEntryGetParentEntry(parent, kIOServicePlane, &next)
         IOObjectRelease(parent)
-        return nil
+        if result != KERN_SUCCESS {
+            return nil
+        }
+        parent = next
     }
     
     return parent
@@ -503,7 +724,7 @@ public class ProcessReader: Reader<[Disk_process]> {
 
 private func runProcess(path: String, args: [String] = []) -> String? {
     let task = Process()
-    task.launchPath = path
+    task.executableURL = URL(fileURLWithPath: path)
     task.arguments = args
     
     let outputPipe = Pipe()
