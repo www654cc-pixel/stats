@@ -677,13 +677,14 @@ private class InfoStrip: NSStackView {
         self.sidebarMode = sidebar
         self.orientation = sidebar ? .vertical : .horizontal
         self.alignment = sidebar ? .width : .centerY
-        self.spacing = sidebar ? 10 : 10
+        self.spacing = sidebar ? 8 : 10
         self.edgeInsets = sidebar
             ? NSEdgeInsets(top: 13, left: 14, bottom: 13, right: 14)
             : NSEdgeInsets(top: 9, left: 14, bottom: 9, right: 12)
         self.heightConstraint?.constant = height
         self.quotaHeader?.isHidden = !sidebar
         self.sectionDivider?.isHidden = !sidebar
+        self.quotaSection?.spacing = sidebar ? 6 : 8
 
         self.quotaWidthConstraint?.isActive = false
         self.quotaWidthConstraint = nil
@@ -691,10 +692,15 @@ private class InfoStrip: NSStackView {
             self.quotaWidthConstraint = self.quotaSection?.widthAnchor.constraint(equalToConstant: width * 0.46)
             self.quotaWidthConstraint?.isActive = true
         }
+        self.quotaBox?.orientation = sidebar ? .vertical : .horizontal
+        self.quotaBox?.alignment = sidebar ? .width : .centerY
+        self.quotaBox?.distribution = sidebar ? .fill : .fillEqually
+        self.quotaBox?.spacing = sidebar ? 5 : 10
+        self.quotaCells.forEach { $0.configure(sidebar: sidebar) }
         self.clockBox?.orientation = sidebar ? .vertical : .horizontal
         self.clockBox?.alignment = sidebar ? .width : .centerY
         self.clockBox?.distribution = .fill
-        self.clockBox?.spacing = sidebar ? 8 : 9
+        self.clockBox?.spacing = sidebar ? 5 : 9
         self.rebuildClock(self.latestReadings)
     }
 
@@ -836,49 +842,94 @@ private class InfoStrip: NSStackView {
 
 private class QuotaCell: NSStackView {
     private let bar = QuotaMiniBar()
+    private let titleField: NSTextField
     private let valueField: NSTextField
+    private var titleWidthConstraint: NSLayoutConstraint?
+    private var valueWidthConstraint: NSLayoutConstraint?
 
     init(title: String) {
+        self.titleField = NSTextField(labelWithString: title)
+        self.titleField.font = Design.subFont
+        self.titleField.textColor = Design.secondaryTextColor
+        self.titleField.lineBreakMode = .byTruncatingTail
+
         self.valueField = NSTextField(labelWithString: "—")
-        self.valueField.font = .monospacedDigitSystemFont(ofSize: 11, weight: .semibold)
+        self.valueField.font = .monospacedDigitSystemFont(ofSize: 11.5, weight: .semibold)
         self.valueField.alignment = .right
         self.valueField.textColor = .labelColor
 
         super.init(frame: .zero)
 
-        self.orientation = .horizontal
-        self.alignment = .centerY
-        self.distribution = .fill
-        self.spacing = 5
-
-        let lab = NSTextField(labelWithString: title)
-        lab.font = Design.subFont
-        lab.textColor = Design.secondaryTextColor
-
-        self.bar.heightAnchor.constraint(equalToConstant: 6).isActive = true
-
-        self.addArrangedSubview(lab)
-        self.addArrangedSubview(self.bar)
-        self.addArrangedSubview(self.valueField)
+        self.bar.heightAnchor.constraint(equalToConstant: 7).isActive = true
+        self.bar.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        self.configure(sidebar: false)
     }
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not implemented")
     }
 
+    func configure(sidebar: Bool) {
+        self.titleWidthConstraint?.isActive = false
+        self.valueWidthConstraint?.isActive = false
+        self.titleWidthConstraint = nil
+        self.valueWidthConstraint = nil
+        self.arrangedSubviews.forEach {
+            self.removeArrangedSubview($0)
+            $0.removeFromSuperview()
+        }
+
+        self.distribution = .fill
+        if sidebar {
+            // Full-width comparison rows: all three plans share the same bar
+            // scale, so 21% visibly occupies one fifth of the available track.
+            self.orientation = .horizontal
+            self.alignment = .centerY
+            self.spacing = 8
+            self.titleWidthConstraint = self.titleField.widthAnchor.constraint(equalToConstant: 54)
+            self.valueWidthConstraint = self.valueField.widthAnchor.constraint(equalToConstant: 38)
+            self.titleWidthConstraint?.isActive = true
+            self.valueWidthConstraint?.isActive = true
+            self.addArrangedSubview(self.titleField)
+            self.addArrangedSubview(self.bar)
+            self.addArrangedSubview(self.valueField)
+        } else {
+            // Compact mode keeps three equal mini gauges. Text owns the first
+            // line and the complete track gets the second line.
+            self.orientation = .vertical
+            self.alignment = .width
+            self.spacing = 3
+            let header = NSStackView()
+            header.orientation = .horizontal
+            header.alignment = .firstBaseline
+            header.distribution = .fill
+            header.spacing = 4
+            header.addArrangedSubview(self.titleField)
+            header.addArrangedSubview(NSView())
+            header.addArrangedSubview(self.valueField)
+            self.addArrangedSubview(header)
+            self.addArrangedSubview(self.bar)
+        }
+    }
+
     func set(remainingPct: Double?, color: NSColor) {
         if let p = remainingPct {
             self.bar.set(fraction: p / 100, color: color)
             self.valueField.stringValue = "\(Int(p.rounded()))%"
+            self.valueField.textColor = color
+            self.toolTip = localizedString("Quota remaining", "\(Int(p.rounded()))")
         } else {
             self.bar.set(fraction: 0, color: .lightGray)
             self.valueField.stringValue = "—"
+            self.valueField.textColor = Design.mutedTextColor
+            self.toolTip = nil
         }
     }
 
     func setError(_ message: String) {
         self.bar.set(fraction: 0, color: .systemRed)
         self.valueField.stringValue = "!"
+        self.valueField.textColor = .systemRed
         self.toolTip = message
     }
 }
