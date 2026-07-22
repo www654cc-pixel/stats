@@ -110,7 +110,7 @@ internal class CalendarPortal: NSStackView {
             let idx = (self.cal.firstWeekday - 1 + i) % 7
             let label = NSTextField(labelWithString: self.cal.shortWeekdaySymbols[idx])
             label.font = NSFont.systemFont(ofSize: 10.5, weight: .medium)
-            label.textColor = .secondaryLabelColor
+            label.textColor = Design.secondaryTextColor
             label.alignment = .center
             // fillEqually only stretches arranged views whose hugging priority
             // doesn't resist; text fields hug at 250, so lower it explicitly —
@@ -145,7 +145,7 @@ internal class CalendarPortal: NSStackView {
         // footer: today's full date + festival, so "today" is visible even
         // while browsing other weeks
         self.footerField.font = NSFont.systemFont(ofSize: 10.5)
-        self.footerField.textColor = .secondaryLabelColor
+        self.footerField.textColor = Design.secondaryTextColor
         self.footerField.alignment = .right
         self.addArrangedSubview(self.footerField)
 
@@ -269,7 +269,7 @@ internal class CalendarPortal: NSStackView {
         button.title = title
         button.isBordered = false
         button.font = NSFont.systemFont(ofSize: 15, weight: .medium)
-        button.contentTintColor = .secondaryLabelColor
+        button.contentTintColor = Design.secondaryTextColor
         button.target = self
         button.action = action
         button.toolTip = tooltip
@@ -428,11 +428,11 @@ private class DayCell: NSView {
             self.highlight.layer?.backgroundColor = NSColor.clear.cgColor
             self.label.font = NSFont.systemFont(ofSize: 13, weight: .medium)
             if !self.inMonth {
-                self.label.textColor = .tertiaryLabelColor
+                self.label.textColor = Design.mutedTextColor
             } else if self.hasFestival {
                 self.label.textColor = Design.warn
             } else if self.weekend {
-                self.label.textColor = .secondaryLabelColor
+                self.label.textColor = Design.secondaryTextColor
             } else {
                 self.label.textColor = .labelColor
             }

@@ -100,7 +100,7 @@ internal class LauncherPortal: NSStackView {
 
         if apps.isEmpty {
             let label = NSTextField(labelWithString: localizedString("Add apps in settings"))
-            label.textColor = .tertiaryLabelColor
+            label.textColor = Design.mutedTextColor
             label.font = NSFont.systemFont(ofSize: 11)
             self.contentStack.addArrangedSubview(label)
         } else {

@@ -621,7 +621,7 @@ private class InfoStrip: NSStackView {
         quotaIcon.contentTintColor = .systemGreen
         let quotaLabel = NSTextField(labelWithString: localizedString("Quota"))
         quotaLabel.font = .systemFont(ofSize: 11, weight: .semibold)
-        quotaLabel.textColor = .secondaryLabelColor
+        quotaLabel.textColor = Design.secondaryTextColor
         quotaHeader.addArrangedSubview(quotaIcon)
         quotaHeader.addArrangedSubview(quotaLabel)
         quotaHeader.addArrangedSubview(NSView())
@@ -774,7 +774,7 @@ private class InfoStrip: NSStackView {
             icon.contentTintColor = .systemBlue
             let label = NSTextField(labelWithString: localizedString("World Clocks"))
             label.font = .systemFont(ofSize: 11, weight: .semibold)
-            label.textColor = .secondaryLabelColor
+            label.textColor = Design.secondaryTextColor
             title.addArrangedSubview(icon)
             title.addArrangedSubview(label)
             title.addArrangedSubview(NSView())
@@ -783,7 +783,7 @@ private class InfoStrip: NSStackView {
             let icon = NSImageView()
             icon.image = NSImage(systemSymbolName: "clock", accessibilityDescription: nil)
             icon.symbolConfiguration = .init(pointSize: 11, weight: .medium)
-            icon.contentTintColor = .tertiaryLabelColor
+            icon.contentTintColor = Design.mutedTextColor
             box.addArrangedSubview(icon)
         }
 
@@ -795,13 +795,13 @@ private class InfoStrip: NSStackView {
 
             let name = NSTextField(labelWithString: r.name)
             name.font = .systemFont(ofSize: 11, weight: .regular)
-            name.textColor = r.isLocal ? .systemBlue : .secondaryLabelColor
+            name.textColor = r.isLocal ? .systemBlue : Design.secondaryTextColor
             let time = NSTextField(labelWithString: r.time)
             time.font = .monospacedDigitSystemFont(ofSize: 12.5, weight: r.isLocal ? .semibold : .medium)
             time.textColor = .labelColor
             let delta = NSTextField(labelWithString: "")
             delta.font = .monospacedDigitSystemFont(ofSize: 9.5, weight: .regular)
-            delta.textColor = .secondaryLabelColor
+            delta.textColor = Design.secondaryTextColor
             delta.alignment = .right
             delta.widthAnchor.constraint(equalToConstant: 24).isActive = true
 
@@ -853,7 +853,7 @@ private class QuotaCell: NSStackView {
 
         let lab = NSTextField(labelWithString: title)
         lab.font = Design.subFont
-        lab.textColor = .secondaryLabelColor
+        lab.textColor = Design.secondaryTextColor
 
         self.bar.heightAnchor.constraint(equalToConstant: 6).isActive = true
 

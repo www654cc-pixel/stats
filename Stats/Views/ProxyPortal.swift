@@ -72,19 +72,19 @@ internal class ProxyPortal: NSStackView {
         self.titleField.font = Design.labelMediumFont
         self.titleField.textColor = .labelColor
         self.modeField.font = NSFont.systemFont(ofSize: 10, weight: .regular)
-        self.modeField.textColor = .secondaryLabelColor
+        self.modeField.textColor = Design.secondaryTextColor
         self.speedField.font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
-        self.speedField.textColor = .secondaryLabelColor
+        self.speedField.textColor = Design.secondaryTextColor
         self.speedField.alignment = .right
 
         self.currentField.font = NSFont.systemFont(ofSize: 12, weight: .medium)
         self.currentField.lineBreakMode = .byTruncatingTail
         self.currentDelayField.font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
-        self.currentDelayField.textColor = .secondaryLabelColor
+        self.currentDelayField.textColor = Design.secondaryTextColor
 
         self.chevron.image = NSImage(systemSymbolName: "chevron.down", accessibilityDescription: nil)
         self.chevron.symbolConfiguration = .init(pointSize: 10, weight: .semibold)
-        self.chevron.contentTintColor = .tertiaryLabelColor
+        self.chevron.contentTintColor = Design.mutedTextColor
 
         self.header.orientation = .horizontal
         self.header.distribution = .fill
@@ -384,7 +384,7 @@ internal class ProxyPortal: NSStackView {
         if delay <= 0 {
             return (localizedString("timeout"), .systemRed)
         }
-        return ("\(delay) ms", delay < 100 ? .systemGreen : (delay < 400 ? .secondaryLabelColor : .systemOrange))
+        return ("\(delay) ms", delay < 100 ? .systemGreen : (delay < 400 ? Design.secondaryTextColor : .systemOrange))
     }
 
     private func markReachable(_ state: Bool) {

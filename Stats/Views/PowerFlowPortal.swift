@@ -119,11 +119,11 @@ internal class PowerFlowPortal: NSStackView {
         summary.spacing = 0
         let summaryLabel = NSTextField(labelWithString: localizedString("System Power"))
         summaryLabel.font = .systemFont(ofSize: 10.5, weight: .medium)
-        summaryLabel.textColor = .secondaryLabelColor
+        summaryLabel.textColor = Design.secondaryTextColor
         self.totalField.font = NSFont.monospacedDigitSystemFont(ofSize: 25, weight: .semibold)
         self.totalField.textColor = .labelColor
         self.sourceField.font = .systemFont(ofSize: 10.5, weight: .regular)
-        self.sourceField.textColor = .secondaryLabelColor
+        self.sourceField.textColor = Design.secondaryTextColor
         summary.addArrangedSubview(summaryLabel)
         summary.addArrangedSubview(self.totalField)
         summary.addArrangedSubview(self.sourceField)
@@ -134,12 +134,12 @@ internal class PowerFlowPortal: NSStackView {
         battery.spacing = 7
         let batteryLabel = NSTextField(labelWithString: localizedString("Battery"))
         batteryLabel.font = .systemFont(ofSize: 10.5, weight: .medium)
-        batteryLabel.textColor = .secondaryLabelColor
+        batteryLabel.textColor = Design.secondaryTextColor
         battery.addArrangedSubview(batteryLabel)
         self.levelBar.heightAnchor.constraint(equalToConstant: self.barHeight).isActive = true
         battery.addArrangedSubview(self.levelBar)
         self.infoField.font = .systemFont(ofSize: 10.5, weight: .regular)
-        self.infoField.textColor = .secondaryLabelColor
+        self.infoField.textColor = Design.secondaryTextColor
         self.infoField.lineBreakMode = .byTruncatingTail
         battery.addArrangedSubview(self.infoField)
         self.heroGrid.addRow(with: [summary, PowerDivider(), battery, PowerDivider(), self.breakdown])
@@ -169,7 +169,7 @@ internal class PowerFlowPortal: NSStackView {
         let button = NSButton()
         button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: tooltip)
         button.symbolConfiguration = .init(pointSize: 10, weight: .semibold)
-        button.contentTintColor = .secondaryLabelColor
+        button.contentTintColor = Design.secondaryTextColor
         button.isBordered = false
         button.focusRingType = .none
         button.toolTip = tooltip
@@ -517,7 +517,7 @@ private final class PowerBreakdownView: NSStackView {
             icon.contentTintColor = item.2
             let label = NSTextField(labelWithString: item.0)
             label.font = .systemFont(ofSize: 10.5, weight: .medium)
-            label.textColor = .secondaryLabelColor
+            label.textColor = Design.secondaryTextColor
             header.addArrangedSubview(icon)
             header.addArrangedSubview(label)
 
@@ -635,7 +635,7 @@ private class BatteryLevelBar: NSView {
         var textColor = NSColor.white
         if x < 5 { // fill too small, draw next to it in the track
             x = fillW + 6
-            textColor = NSColor.secondaryLabelColor
+            textColor = Design.secondaryTextColor
         }
         let colored = NSAttributedString(string: text, attributes: [
             .font: NSFont.systemFont(ofSize: 9, weight: .bold),

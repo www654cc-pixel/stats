@@ -32,9 +32,17 @@ internal enum Design {
     static let subFontMono = NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .regular)
 
     // text colors
-    static let titleColor = NSColor.secondaryLabelColor
+    static let secondaryTextColor = NSColor(name: nil) { appearance in
+        let dark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        return NSColor(calibratedWhite: dark ? 0.90 : 0.14, alpha: 1)
+    }
+    static let mutedTextColor = NSColor(name: nil) { appearance in
+        let dark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        return NSColor(calibratedWhite: dark ? 0.74 : 0.24, alpha: 1)
+    }
+    static let titleColor = secondaryTextColor
     static let labelColor = NSColor.labelColor
-    static let subColor = NSColor.tertiaryLabelColor
+    static let subColor = mutedTextColor
 
     // unified accent — reserved for "today", local clock, interactive emphasis
     static let accent = NSColor.systemBlue
@@ -96,6 +104,35 @@ internal enum Design {
     // liquid-glass optical constants (used by popup.swift)
     static let glassEdgeAlpha: CGFloat = 0.28       // border stroke opacity
     static let glassTopGlowMax: CGFloat = 0.07      // top reflection peak
+
+    // Clear liquid glass needs an appearance-aware luminance floor. It
+    // keeps semantic black text readable over dark wallpaper in Light Mode,
+    // and semantic white text readable over bright content in Dark Mode,
+    // without replacing the scene with an opaque frosted fill.
+    static func glassReadabilityTint(compact: Bool) -> NSColor {
+        NSColor(name: nil) { appearance in
+            let dark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            let increasedContrast = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
+            let alpha: CGFloat
+            if increasedContrast {
+                alpha = 0.58
+            } else {
+                alpha = compact ? 0.42 : 0.46
+            }
+            return NSColor(calibratedWhite: dark ? 0.0 : 1.0, alpha: alpha)
+        }
+    }
+
+    static func glassTextProtectionShadow() -> NSShadow {
+        let shadow = NSShadow()
+        shadow.shadowOffset = .zero
+        shadow.shadowBlurRadius = 0.75
+        shadow.shadowColor = NSColor(name: nil) { appearance in
+            let dark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            return NSColor(calibratedWhite: dark ? 0.0 : 1.0, alpha: 0.34)
+        }
+        return shadow
+    }
 }
 
 // MARK: - grid
@@ -389,10 +426,10 @@ internal class MetricTile: NSStackView {
         secondary.distribution = .fill
         secondary.alignment = .firstBaseline
         self.leftField.font = .systemFont(ofSize: 10.5, weight: .medium)
-        self.leftField.textColor = .secondaryLabelColor
+        self.leftField.textColor = Design.secondaryTextColor
         self.leftField.lineBreakMode = .byTruncatingTail
         self.rightField.font = .systemFont(ofSize: 10.5, weight: .medium)
-        self.rightField.textColor = .secondaryLabelColor
+        self.rightField.textColor = Design.secondaryTextColor
         self.rightField.alignment = .right
         self.rightField.lineBreakMode = .byTruncatingTail
         self.rightField.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
@@ -593,21 +630,24 @@ internal extension NSView {
                 surface = LiquidGlassCardSurface(frame: self.bounds)
                 surface.identifier = surfaceID
                 surface.autoresizingMask = [.width, .height]
-                // Dense information cards use regular glass for dependable
-                // contrast. Compact utility strips use clear glass, matching
-                // the desktop-widget treatment without sacrificing legibility.
-                surface.style = (self is ProxyPortal || self is LauncherPortal) ? .clear : .regular
+                // Use the same transparent, refractive system glass as the
+                // compact utility strips. Readability comes from the adaptive
+                // tint below, not from switching dense cards to frosted glass.
+                surface.style = .clear
                 surface.cornerRadius = liquidRadius
-                // No synthetic gray wash: the system glass renderer samples
-                // and refracts the real scene behind the card by itself.
-                surface.tintColor = nil
                 if #available(macOS 27.0, *) {
                     surface.effectIsInteractive = self is MetricTile || self is ProxyPortal || self is LauncherPortal
                 }
                 self.addSubview(surface, positioned: .below, relativeTo: nil)
+                DispatchQueue.main.async { [weak self] in
+                    self?.applyGlassTextProtection()
+                }
             }
             surface.frame = self.bounds
             surface.cornerRadius = liquidRadius
+            let compact = self is ProxyPortal || self is LauncherPortal
+            surface.style = .clear
+            surface.tintColor = Design.glassReadabilityTint(compact: compact)
             self.layer?.backgroundColor = NSColor.clear.cgColor
             self.layer?.borderWidth = 0
         } else {
@@ -630,6 +670,16 @@ internal extension NSView {
             self.layer?.shadowRadius = 5
             self.layer?.shadowOpacity = 1
         }
+    }
+
+    private func applyGlassTextProtection() {
+        func visit(_ view: NSView) {
+            if let field = view as? NSTextField {
+                field.shadow = Design.glassTextProtectionShadow()
+            }
+            view.subviews.forEach(visit)
+        }
+        self.subviews.forEach(visit)
     }
 
     // Transparent variant: no fill/border/shadow. Used by containers that
