@@ -17,7 +17,6 @@ internal class ProxyPortal: NSStackView {
     }
     private var base: String { "http://\(self.controller)" }
 
-    private let rowHeight: CGFloat = 20
     private let headerHeight: CGFloat = 22
 
     private var heightConstraint: NSLayoutConstraint?
@@ -29,12 +28,11 @@ internal class ProxyPortal: NSStackView {
     private var currentField = NSTextField(labelWithString: "")
     private var currentDelayField = NSTextField(labelWithString: "")
     private let chevron = NSImageView()
-    private let nodesStack = NSStackView()
-    // the node list is collapsed into a single summary row by default
-    private var expanded: Bool = false
+    private let header = NSStackView()
+    private weak var openNodesMenu: NSMenu?
 
-    private var nodeRows: [String: ProxyNodeRow] = [:]
-    private var nodeCount: Int = 0
+    private var nodeNames: [String] = []
+    private var nodeDelays: [String: Int] = [:]
     private var currentNode: String = ""
     private var groupName: String = ""
     private var switchable: Bool = false
@@ -88,12 +86,11 @@ internal class ProxyPortal: NSStackView {
         self.chevron.symbolConfiguration = .init(pointSize: 10, weight: .semibold)
         self.chevron.contentTintColor = .tertiaryLabelColor
 
-        let header = NSStackView()
-        header.orientation = .horizontal
-        header.distribution = .fill
-        header.alignment = .centerY
-        header.spacing = 6
-        header.heightAnchor.constraint(equalToConstant: self.headerHeight).isActive = true
+        self.header.orientation = .horizontal
+        self.header.distribution = .fill
+        self.header.alignment = .centerY
+        self.header.spacing = 6
+        self.header.heightAnchor.constraint(equalToConstant: self.headerHeight).isActive = true
 
         // native section icon: globe, macOS network-accent teal
         let globe = NSImageView()
@@ -101,27 +98,20 @@ internal class ProxyPortal: NSStackView {
         globe.symbolConfiguration = .init(pointSize: 11, weight: .semibold)
         globe.contentTintColor = .systemTeal
         globe.setContentHuggingPriority(.required, for: .horizontal)
-        header.addArrangedSubview(globe)
-        header.addArrangedSubview(self.titleField)
-        header.addArrangedSubview(self.modeField)
-        header.addArrangedSubview(NSView())
-        header.addArrangedSubview(self.currentField)
-        header.addArrangedSubview(self.currentDelayField)
-        header.addArrangedSubview(self.speedField)
-        header.addArrangedSubview(self.chevron)
-        let click = NSClickGestureRecognizer(target: self, action: #selector(self.toggleExpanded))
-        header.addGestureRecognizer(click)
-        self.addArrangedSubview(header)
+        self.header.addArrangedSubview(globe)
+        self.header.addArrangedSubview(self.titleField)
+        self.header.addArrangedSubview(self.modeField)
+        self.header.addArrangedSubview(NSView())
+        self.header.addArrangedSubview(self.currentField)
+        self.header.addArrangedSubview(self.currentDelayField)
+        self.header.addArrangedSubview(self.speedField)
+        self.header.addArrangedSubview(self.chevron)
+        let click = NSClickGestureRecognizer(target: self, action: #selector(self.showNodeMenu))
+        self.header.addGestureRecognizer(click)
+        self.addArrangedSubview(self.header)
 
-        self.nodesStack.orientation = .vertical
-        self.nodesStack.distribution = .fill
-        self.nodesStack.alignment = .width
-        self.nodesStack.spacing = 1
-        self.nodesStack.isHidden = true
-        self.nodesStack.edgeInsets = NSEdgeInsets(top: 2, left: 17, bottom: 0, right: 0)
-        self.addArrangedSubview(self.nodesStack)
-
-        self.heightConstraint = self.heightAnchor.constraint(equalToConstant: self.headerHeight)
+        let compactHeight = self.headerHeight + self.edgeInsets.top + self.edgeInsets.bottom
+        self.heightConstraint = self.heightAnchor.constraint(equalToConstant: compactHeight)
         self.heightConstraint?.isActive = true
     }
 
@@ -141,26 +131,52 @@ internal class ProxyPortal: NSStackView {
         self.widthConstraint?.isActive = true
     }
 
-    @objc private func toggleExpanded() {
-        self.expanded.toggle()
-        self.nodesStack.isHidden = !self.expanded
-        self.chevron.image = NSImage(systemSymbolName: self.expanded ? "chevron.up" : "chevron.down", accessibilityDescription: nil)
-        self.updateHeight(nodeCount: self.nodeCount)
-        // when the user expands the list, test all node delays if stale
-        if self.expanded, Date().timeIntervalSince(self.allDelaysTestedAt) > self.allDelayCacheInterval {
+    @objc private func showNodeMenu() {
+        guard !self.nodeNames.isEmpty else { return }
+
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        self.nodeNames.forEach { name in
+            let item = NSMenuItem(
+                title: self.menuTitle(name: name, delay: self.nodeDelays[name]),
+                action: #selector(self.selectNode(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.representedObject = name
+            item.state = name == self.currentNode ? .on : .off
+            item.isEnabled = self.switchable
+            menu.addItem(item)
+        }
+
+        self.openNodesMenu = menu
+        self.chevron.image = NSImage(systemSymbolName: "chevron.up", accessibilityDescription: nil)
+        if Date().timeIntervalSince(self.allDelaysTestedAt) > self.allDelayCacheInterval {
             self.testAllDelays()
         }
+
+        // A real NSMenu tracks in its own surface. Unlike the old inline stack,
+        // it never changes the dashboard's intrinsic height and AppKit flips or
+        // scrolls it automatically when the proxy card is near the screen edge.
+        let selected = menu.items.first(where: { $0.state == .on })
+        let popupWindow = self.window as? PopupWindow
+        popupWindow?.locked = true
+        menu.popUp(
+            positioning: selected,
+            at: NSPoint(x: self.header.bounds.maxX - 18, y: self.header.bounds.minY),
+            in: self.header
+        )
+        popupWindow?.locked = false
+        self.openNodesMenu = nil
+        self.chevron.image = NSImage(systemSymbolName: "chevron.down", accessibilityDescription: nil)
+    }
+
+    @objc private func selectNode(_ sender: NSMenuItem) {
+        guard let name = sender.representedObject as? String else { return }
+        self.switchNode(name)
     }
 
     internal func start() {
-        // The node picker is a secondary tool. Always enter the dashboard in
-        // its compact state so it cannot push the launcher below the fold.
-        if self.expanded {
-            self.expanded = false
-            self.nodesStack.isHidden = true
-            self.chevron.image = NSImage(systemSymbolName: "chevron.down", accessibilityDescription: nil)
-            self.updateHeight(nodeCount: self.nodeCount)
-        }
         self.refreshState()
         self.refreshSpeed()
         self.speedTimer?.invalidate()
@@ -256,7 +272,7 @@ internal class ProxyPortal: NSStackView {
     /// Test all node delays in bounded batches (max 5 concurrent) to avoid
     /// hammering the proxy controller and the network when there are many nodes.
     private func testAllDelays() {
-        let names = Array(self.nodeRows.keys)
+        let names = self.nodeNames
         guard !names.isEmpty else { return }
         self.allDelaysTestedAt = Date()
         let batchSize = 5
@@ -331,9 +347,12 @@ internal class ProxyPortal: NSStackView {
                 delay = (json["delay"] as? NSNumber)?.intValue ?? 0
             }
             DispatchQueue.main.async {
-                self.nodeRows[name]?.setDelay(delay)
+                self.nodeDelays[name] = delay
+                if let item = self.openNodesMenu?.items.first(where: { ($0.representedObject as? String) == name }) {
+                    item.title = self.menuTitle(name: name, delay: delay)
+                }
                 if name == self.currentNode {
-                    let style = ProxyNodeRow.delayStyle(delay)
+                    let style = self.delayStyle(delay)
                     self.currentDelayField.stringValue = style.text
                     self.currentDelayField.textColor = style.color
                 }
@@ -344,30 +363,21 @@ internal class ProxyPortal: NSStackView {
     // MARK: - layout
 
     private func rebuildNodes(_ names: [String]) {
-        if Array(self.nodeRows.keys).sorted() != names.sorted() {
-            self.nodesStack.subviews.forEach { $0.removeFromSuperview() }
-            self.nodeRows = [:]
-            names.forEach { name in
-                let row = ProxyNodeRow(name: name, height: self.rowHeight)
-                row.onClick = { [weak self] in self?.switchNode(name) }
-                self.nodesStack.addArrangedSubview(row)
-                self.nodeRows[name] = row
-            }
-        }
-        self.nodeRows.forEach {
-            $0.value.setClickable(self.switchable)
-            $0.value.setCurrent($0.key == self.currentNode)
-        }
-        self.nodeCount = names.count
-        self.updateHeight(nodeCount: names.count)
+        self.nodeNames = names
+        let validNames = Set(names)
+        self.nodeDelays = self.nodeDelays.filter { validNames.contains($0.key) }
     }
 
-    private func updateHeight(nodeCount: Int) {
-        let listH = (self.expanded && nodeCount > 0) ? CGFloat(nodeCount) * (self.rowHeight + 1) + 4 : 0
-        let h = self.headerHeight + listH + self.edgeInsets.top + self.edgeInsets.bottom
-        self.heightConstraint?.constant = h
-        self.setFrameSize(NSSize(width: self.frame.width, height: h))
-        self.onResize?()
+    private func menuTitle(name: String, delay: Int?) -> String {
+        guard let delay = delay else { return name }
+        return "\(name)    \(self.delayStyle(delay).text)"
+    }
+
+    private func delayStyle(_ delay: Int) -> (text: String, color: NSColor) {
+        if delay <= 0 {
+            return (localizedString("timeout"), .systemRed)
+        }
+        return ("\(delay) ms", delay < 100 ? .systemGreen : (delay < 400 ? .secondaryLabelColor : .systemOrange))
     }
 
     private func markReachable(_ state: Bool) {
@@ -375,86 +385,5 @@ internal class ProxyPortal: NSStackView {
             self.reachable = state
             self.onResize?()
         }
-    }
-}
-
-private class ProxyNodeRow: NSStackView {
-    private let nameField: NSTextField
-    private let delayField = NSTextField(labelWithString: "…")
-    private let dot = NSView(frame: NSRect(x: 0, y: 0, width: 6, height: 6))
-
-    internal var onClick: (() -> Void)?
-    private var clickable: Bool = false
-
-    init(name: String, height: CGFloat) {
-        self.nameField = NSTextField(labelWithString: name)
-
-        super.init(frame: NSRect.zero)
-
-        self.orientation = .horizontal
-        self.distribution = .fill
-        self.spacing = 6
-        self.heightAnchor.constraint(equalToConstant: height).isActive = true
-
-        let click = NSClickGestureRecognizer(target: self, action: #selector(self.handleClick))
-        self.addGestureRecognizer(click)
-
-        self.dot.wantsLayer = true
-        self.dot.layer?.cornerRadius = 3
-        self.dot.layer?.backgroundColor = NSColor.tertiaryLabelColor.cgColor
-        self.dot.widthAnchor.constraint(equalToConstant: 6).isActive = true
-        self.dot.heightAnchor.constraint(equalToConstant: 6).isActive = true
-
-        self.nameField.font = NSFont.systemFont(ofSize: 11, weight: .regular)
-        self.nameField.lineBreakMode = .byTruncatingTail
-
-        self.delayField.font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
-        self.delayField.alignment = .right
-        self.delayField.textColor = .secondaryLabelColor
-
-        self.addArrangedSubview(self.dot)
-        self.addArrangedSubview(self.nameField)
-        self.addArrangedSubview(NSView())
-        self.addArrangedSubview(self.delayField)
-    }
-
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    @objc private func handleClick() {
-        guard self.clickable else { return }
-        self.onClick?()
-    }
-
-    func setClickable(_ state: Bool) {
-        self.clickable = state
-        self.window?.invalidateCursorRects(for: self)
-    }
-
-    override func resetCursorRects() {
-        if self.clickable {
-            self.addCursorRect(self.bounds, cursor: .pointingHand)
-        }
-    }
-
-    func setCurrent(_ current: Bool) {
-        self.dot.layer?.backgroundColor = (current ? NSColor.systemBlue : NSColor.tertiaryLabelColor).cgColor
-        self.nameField.font = NSFont.systemFont(ofSize: 11, weight: current ? .semibold : .regular)
-    }
-
-    static func delayStyle(_ delay: Int) -> (text: String, color: NSColor) {
-        if delay <= 0 {
-            return (localizedString("timeout"), .systemRed)
-        }
-        // thresholds tuned for cross-border use: <100ms local-fast (green),
-        // <400ms normal intercontinental (neutral gray), >400ms genuinely slow (orange)
-        return ("\(delay) ms", delay < 100 ? .systemGreen : (delay < 400 ? .secondaryLabelColor : .systemOrange))
-    }
-
-    func setDelay(_ delay: Int) {
-        let style = ProxyNodeRow.delayStyle(delay)
-        self.delayField.stringValue = style.text
-        self.delayField.textColor = style.color
     }
 }

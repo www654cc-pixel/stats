@@ -79,7 +79,9 @@ open class PopupWrapper: NSStackView, Popup_p {
 
 public class PopupWindow: NSWindow, NSWindowDelegate {
     private let viewController: PopupViewController
-    internal var locked: Bool = false
+    // Interactive child surfaces such as an NSMenu temporarily take key status.
+    // Callers can suspend auto-dismiss while those surfaces are tracking.
+    public var locked: Bool = false
     internal var openedBy: widget_t? = nil
     
     public init(title: String, module: ModuleType, view: Popup_p?, visibilityCallback: @escaping (_ state: Bool) -> Void) {
