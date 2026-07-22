@@ -21,20 +21,32 @@ import GPU
 import Bluetooth
 import Clock
 import Remote
+import Quota
 
 let updater = Updater(github: "exelban/stats", url: "https://api.mac-stats.com/release/latest")
-var modules: [Module] = [
-    CPU(),
-    GPU(),
-    RAM(),
-    Disk(),
-    Sensors(),
-    Network(),
-    Battery(),
-    Bluetooth(),
-    Clock(),
-    Remote()
-]
+var modules: [Module] = {
+    // Bluetooth is initialised on demand only: its CoreBluetooth central manager
+    // triggers a system Bluetooth-permission prompt on launch. Spinning it up
+    // unconditionally made the prompt appear for every user on every launch —
+    // and with ad-hoc re-signing, TCC treats each rebuild as a new app and
+    // re-prompts. Only create it when the user has actually enabled the module.
+    var list: [Module] = [
+        CPU(),
+        GPU(),
+        RAM(),
+        Disk(),
+        Sensors(),
+        Network(),
+        Battery(),
+        Clock(),
+        Remote(),
+        Quota()
+    ]
+    if Store.shared.bool(key: "Bluetooth_state", defaultValue: false) {
+        list.append(Bluetooth())
+    }
+    return list
+}()
 
 @main
 class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
@@ -74,6 +86,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         
         self.suppressStatusBarTilingConstraintUpdates()
         self.parseArguments()
+        self.configureLaunchAtLoginFromArguments()
         self.parseVersion()
         SMCHelper.shared.checkForUpdate()
         self.setup {
@@ -100,6 +113,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         
         info("Stats started in \((startingPoint.timeIntervalSinceNow * -1).rounded(toPlaces: 4)) seconds")
         self.startTS = Date()
+    }
+
+    private func configureLaunchAtLoginFromArguments() {
+        if CommandLine.arguments.contains("--enable-launch-at-login") {
+            LaunchAtLogin.isEnabled = true
+        } else if CommandLine.arguments.contains("--disable-launch-at-login") {
+            LaunchAtLogin.isEnabled = false
+        }
     }
     
     func applicationWillTerminate(_ aNotification: Notification) {

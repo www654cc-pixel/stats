@@ -17,7 +17,7 @@ internal class ProxyPortal: NSStackView {
     }
     private var base: String { "http://\(self.controller)" }
 
-    private let rowHeight: CGFloat = 18
+    private let rowHeight: CGFloat = 20
     private let headerHeight: CGFloat = 22
 
     private var heightConstraint: NSLayoutConstraint?
@@ -68,30 +68,40 @@ internal class ProxyPortal: NSStackView {
         self.orientation = .vertical
         self.distribution = .fill
         self.alignment = .width
-        self.spacing = 2
-        self.edgeInsets = NSEdgeInsets(top: 4, left: 8, bottom: 4, right: 8)
+        self.spacing = 4
+        self.edgeInsets = NSEdgeInsets(top: 10, left: 14, bottom: 10, right: 14)
 
-        self.titleField.font = NSFont.systemFont(ofSize: 12, weight: .medium)
+        self.titleField.font = Design.labelMediumFont
+        self.titleField.textColor = .labelColor
         self.modeField.font = NSFont.systemFont(ofSize: 10, weight: .regular)
         self.modeField.textColor = .secondaryLabelColor
-        self.speedField.font = NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .regular)
+        self.speedField.font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
         self.speedField.textColor = .secondaryLabelColor
         self.speedField.alignment = .right
 
-        self.currentField.font = NSFont.systemFont(ofSize: 11, weight: .semibold)
+        self.currentField.font = NSFont.systemFont(ofSize: 12, weight: .medium)
         self.currentField.lineBreakMode = .byTruncatingTail
-        self.currentDelayField.font = NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .regular)
+        self.currentDelayField.font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
         self.currentDelayField.textColor = .secondaryLabelColor
 
         self.chevron.image = NSImage(systemSymbolName: "chevron.down", accessibilityDescription: nil)
-        self.chevron.symbolConfiguration = .init(pointSize: 9, weight: .semibold)
+        self.chevron.symbolConfiguration = .init(pointSize: 10, weight: .semibold)
         self.chevron.contentTintColor = .tertiaryLabelColor
 
         let header = NSStackView()
         header.orientation = .horizontal
         header.distribution = .fill
+        header.alignment = .centerY
         header.spacing = 6
         header.heightAnchor.constraint(equalToConstant: self.headerHeight).isActive = true
+
+        // native section icon: globe, macOS network-accent teal
+        let globe = NSImageView()
+        globe.image = NSImage(systemSymbolName: "globe", accessibilityDescription: nil)
+        globe.symbolConfiguration = .init(pointSize: 11, weight: .semibold)
+        globe.contentTintColor = .systemTeal
+        globe.setContentHuggingPriority(.required, for: .horizontal)
+        header.addArrangedSubview(globe)
         header.addArrangedSubview(self.titleField)
         header.addArrangedSubview(self.modeField)
         header.addArrangedSubview(NSView())
@@ -108,6 +118,7 @@ internal class ProxyPortal: NSStackView {
         self.nodesStack.alignment = .width
         self.nodesStack.spacing = 1
         self.nodesStack.isHidden = true
+        self.nodesStack.edgeInsets = NSEdgeInsets(top: 2, left: 17, bottom: 0, right: 0)
         self.addArrangedSubview(self.nodesStack)
 
         self.heightConstraint = self.heightAnchor.constraint(equalToConstant: self.headerHeight)
@@ -122,8 +133,12 @@ internal class ProxyPortal: NSStackView {
         self.applyCardStyle()
     }
 
+    private var widthConstraint: NSLayoutConstraint?
+
     internal func setWidth(_ width: CGFloat) {
-        self.setFrameSize(NSSize(width: width, height: self.frame.height))
+        self.widthConstraint?.isActive = false
+        self.widthConstraint = self.widthAnchor.constraint(equalToConstant: width)
+        self.widthConstraint?.isActive = true
     }
 
     @objc private func toggleExpanded() {
@@ -138,6 +153,14 @@ internal class ProxyPortal: NSStackView {
     }
 
     internal func start() {
+        // The node picker is a secondary tool. Always enter the dashboard in
+        // its compact state so it cannot push the launcher below the fold.
+        if self.expanded {
+            self.expanded = false
+            self.nodesStack.isHidden = true
+            self.chevron.image = NSImage(systemSymbolName: "chevron.down", accessibilityDescription: nil)
+            self.updateHeight(nodeCount: self.nodeCount)
+        }
         self.refreshState()
         self.refreshSpeed()
         self.speedTimer?.invalidate()

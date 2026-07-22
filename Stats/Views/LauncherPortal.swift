@@ -18,7 +18,7 @@ internal class LauncherPortal: NSStackView {
     private let titleField = NSTextField(labelWithString: localizedString("Launchpad"))
     private let contentStack = NSStackView()
 
-    private let iconSize: CGFloat = 24
+    private let iconSize: CGFloat = 26
 
     init() {
         super.init(frame: NSRect(x: 0, y: 0, width: Constants.Popup.width, height: 0))
@@ -29,21 +29,37 @@ internal class LauncherPortal: NSStackView {
         self.orientation = .vertical
         self.distribution = .fill
         self.alignment = .width
-        self.spacing = Constants.Popup.spacing
-        self.edgeInsets = NSEdgeInsets(top: 8, left: 8, bottom: 8, right: 8)
+        self.spacing = 4
+        self.edgeInsets = NSEdgeInsets(top: 10, left: 14, bottom: 10, right: 14)
 
-        self.titleField.font = NSFont.systemFont(ofSize: 12, weight: .medium)
+        self.titleField.font = Design.labelMediumFont
+        self.titleField.textColor = .labelColor
 
-        // single-line layout: title on the left, app icons flowing after it
+        // single-line layout: rocket icon + title on the left, app icons flowing after
         let header = NSStackView()
         header.orientation = .horizontal
         header.distribution = .fill
+        header.alignment = .centerY
         header.spacing = 12
+
+        let rocket = NSImageView()
+        rocket.image = NSImage(systemSymbolName: "square.grid.2x2.fill", accessibilityDescription: nil)
+        rocket.symbolConfiguration = .init(pointSize: 11, weight: .semibold)
+        rocket.contentTintColor = .systemIndigo
+        rocket.setContentHuggingPriority(.required, for: .horizontal)
+
+        let titleBox = NSStackView()
+        titleBox.orientation = .horizontal
+        titleBox.alignment = .centerY
+        titleBox.spacing = 5
+        titleBox.addArrangedSubview(rocket)
+        titleBox.addArrangedSubview(self.titleField)
+
         self.contentStack.orientation = .horizontal
         self.contentStack.distribution = .fill
         self.contentStack.alignment = .centerY
-        self.contentStack.spacing = 8
-        header.addArrangedSubview(self.titleField)
+        self.contentStack.spacing = 6
+        header.addArrangedSubview(titleBox)
         header.addArrangedSubview(self.contentStack)
         header.addArrangedSubview(NSView())
         self.addArrangedSubview(header)
@@ -84,14 +100,14 @@ internal class LauncherPortal: NSStackView {
 
         if apps.isEmpty {
             let label = NSTextField(labelWithString: localizedString("Add apps in settings"))
-            label.textColor = .secondaryLabelColor
-            label.font = NSFont.systemFont(ofSize: 10)
+            label.textColor = .tertiaryLabelColor
+            label.font = NSFont.systemFont(ofSize: 11)
             self.contentStack.addArrangedSubview(label)
         } else {
             apps.forEach { self.contentStack.addArrangedSubview(self.appTile($0)) }
         }
 
-        let h = self.edgeInsets.top + self.iconSize + 6 + self.edgeInsets.bottom
+        let h = self.edgeInsets.top + self.iconSize + 8 + self.edgeInsets.bottom
         self.heightConstraint?.constant = h
         self.setFrameSize(NSSize(width: self.frame.width, height: h))
         self.onResize?()

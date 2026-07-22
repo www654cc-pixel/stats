@@ -7,6 +7,9 @@
 
 macOS system monitor in your menu bar
 
+> This fork includes a custom [single-icon combined dashboard](docs/combined-dashboard.md)
+> designed for the owner's Apple Silicon Mac.
+
 ## Installation
 ### Manual
 You can download the latest version [here](https://github.com/exelban/stats/releases/latest/download/Stats.dmg).

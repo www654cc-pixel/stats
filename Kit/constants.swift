@@ -12,7 +12,7 @@
 import Cocoa
 
 public struct Popup_c_s {
-    public let width: CGFloat = 264
+    public let width: CGFloat = 340
     public let height: CGFloat = 300
     public let margins: CGFloat = 8
     public let spacing: CGFloat = 2
@@ -62,6 +62,7 @@ public enum ModuleType: Int {
     case bluetooth
     case clock
     case remote
+    case quota
     
     case combined
     
@@ -77,6 +78,7 @@ public enum ModuleType: Int {
         case .bluetooth: return "Bluetooth"
         case .clock: return "Clock"
         case .remote: return "Remote"
+        case .quota: return "Quota"
         case .combined: return ""
         }
     }

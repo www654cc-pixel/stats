@@ -79,6 +79,14 @@ public protocol CombinedClockPortal: AnyObject {
     // computed at call time so the row always shows the current minute
     var clockReadings: [ClockReading] { get }
 }
+public protocol CombinedQuotaPortal: AnyObject {
+    // remaining-% snapshots (0...100) for the combined overview's compact strip.
+    // nil means the source was not configured / not yet read.
+    var kimiFiveHourPct: Double? { get }
+    var kimiWeeklyPct: Double? { get }
+    var codexRemainingPct: Double? { get }   // 100 - utilization, or nil
+    var codexError: String? { get }
+}
 
 // one timezone entry for the combined overview's single-line clock row
 public struct ClockReading {

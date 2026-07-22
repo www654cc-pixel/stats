@@ -93,7 +93,11 @@ public class PopupWindow: NSWindow, NSWindowDelegate {
                 width: self.viewController.view.frame.width,
                 height: self.viewController.view.frame.height
             ),
-            styleMask: [.titled, .fullSizeContentView],
+            // A titled NSWindow installs an NSThemeFrame which still paints a
+            // faint full-window sheet even when contentView is transparent.
+            // The combined dashboard must be truly frameless so only its
+            // individual glass controls participate in composition.
+            styleMask: module == .combined ? [.borderless] : [.titled, .fullSizeContentView],
             backing: .buffered,
             defer: true
         )
@@ -110,9 +114,18 @@ public class PopupWindow: NSWindow, NSWindowDelegate {
         self.animationBehavior = .default
         self.collectionBehavior = .moveToActiveSpace
         self.backgroundColor = .clear
-        self.hasShadow = true
+        self.isOpaque = module != .combined
+        // The combined dashboard is a field of independent glass controls,
+        // not one large glass card containing smaller cards.
+        self.hasShadow = module != .combined
         self.setIsVisible(false)
         self.delegate = self
+
+        if let cv = self.contentView {
+            cv.wantsLayer = true
+            cv.layer?.cornerRadius = module == .combined ? 0 : 18
+            cv.layer?.masksToBounds = module != .combined
+        }
     }
     
     public func windowWillMove(_ notification: Notification) {
@@ -182,11 +195,12 @@ internal class PopupViewController: NSViewController {
 internal class PopupView: NSView {
     private var view: Popup_p? = nil
     
-    private var foreground: NSVisualEffectView
+    private var foreground: NSView
     private var background: NSView
     
     private let header: HeaderView
     private let body: NSScrollView
+    private let chromeHeight: CGFloat
     
     override var intrinsicContentSize: CGSize {
         return CGSize(width: self.frame.width, height: self.frame.height)
@@ -195,11 +209,12 @@ internal class PopupView: NSView {
     private var containerHeight: CGFloat?
     
     init(frame: NSRect, module: ModuleType) {
+        self.chromeHeight = module == .combined ? 0 : Constants.Popup.headerHeight
         self.header = HeaderView(frame: NSRect(
             x: 0,
-            y: frame.height - Constants.Popup.headerHeight,
+            y: frame.height - self.chromeHeight,
             width: frame.width,
-            height: Constants.Popup.headerHeight
+            height: self.chromeHeight
         ), module: module)
         self.body = NSScrollView(frame: NSRect(
             x: Constants.Popup.margins,
@@ -210,21 +225,58 @@ internal class PopupView: NSView {
         self.windowHeight = NSScreen.main?.visibleFrame.height
         self.containerHeight = self.body.documentView?.frame.height
         
-        self.foreground = NSVisualEffectView(frame: frame)
-        self.foreground.material = .titlebar
-        self.foreground.blendingMode = .behindWindow
-        self.foreground.state = .active
-        self.foreground.wantsLayer = true
-        self.foreground.layer?.backgroundColor = NSColor.red.cgColor
-        self.foreground.layer?.cornerRadius = 6
-        
         self.background = NSView(frame: frame)
         self.background.wantsLayer = true
-        self.foreground.addSubview(self.background)
+
+        // macOS 26+ supplies the real system glass renderer. It handles the
+        // refraction, edge lighting and appearance changes that a hand-built
+        // blur/gradient stack cannot reproduce. Older systems retain the
+        // upstream visual-effect fallback.
+        if module == .combined {
+            // The dashboard is a constellation of independent glass controls.
+            // Keep the window canvas fully transparent so it never reads as a
+            // large glass sheet containing smaller glass sheets.
+            self.foreground = self.background
+        } else if #available(macOS 26.0, *) {
+            let glass = NSGlassEffectView(frame: frame)
+            glass.style = .regular
+            glass.cornerRadius = 18
+            glass.tintColor = NSColor(name: nil) { appearance in
+                let dark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+                return dark
+                    ? NSColor(calibratedWhite: 0.08, alpha: 0.12)
+                    : NSColor(calibratedWhite: 1.0, alpha: 0.08)
+            }
+            if #available(macOS 27.0, *) {
+                glass.effectIsInteractive = false
+            }
+            glass.contentView = self.background
+            self.foreground = glass
+        } else {
+            let material = NSVisualEffectView(frame: frame)
+            material.material = .menu
+            material.blendingMode = .behindWindow
+            material.state = .active
+            material.wantsLayer = true
+            material.layer?.cornerRadius = 18
+            material.layer?.masksToBounds = true
+            material.addSubview(self.background)
+            self.foreground = material
+        }
         
         super.init(frame: frame)
+
+        self.header.isHidden = module == .combined
         
         self.body.drawsBackground = false
+        self.body.backgroundColor = .clear
+        // NSScrollView owns an NSClipView which has its own opaque default
+        // background. Clearing only the scroll view leaves a pale rectangle
+        // visible through the gaps between independent glass cards.
+        self.body.contentView.drawsBackground = false
+        self.body.contentView.backgroundColor = .clear
+        self.body.contentView.wantsLayer = true
+        self.body.contentView.layer?.backgroundColor = NSColor.clear.cgColor
         self.body.translatesAutoresizingMaskIntoConstraints = true
         self.body.borderType = .noBorder
         self.body.hasVerticalScroller = true
@@ -235,6 +287,7 @@ internal class PopupView: NSView {
         self.addSubview(self.foreground, positioned: .below, relativeTo: .none)
         self.addSubview(self.header)
         self.addSubview(self.body)
+
     }
     
     required init?(coder: NSCoder) {
@@ -242,7 +295,7 @@ internal class PopupView: NSView {
     }
     
     override func updateLayer() {
-        self.background.layer?.backgroundColor = self.isDarkMode ? .clear : NSColor.white.cgColor
+        self.background.layer?.backgroundColor = NSColor.clear.cgColor
     }
     
     fileprivate func setView(_ view: Popup_p?) {
@@ -251,7 +304,7 @@ internal class PopupView: NSView {
         var isScrollVisible: Bool = false
         var size: NSSize = NSSize(
             width: (view?.frame.width ?? Constants.Popup.width) + (Constants.Popup.margins*2),
-            height: (view?.frame.height ?? 0) + Constants.Popup.headerHeight + (Constants.Popup.margins*2)
+            height: (view?.frame.height ?? 0) + self.chromeHeight + (Constants.Popup.margins*2)
         )
         
         self.windowHeight = NSScreen.main?.visibleFrame.height // for height recalculate when appear/disappear
@@ -269,11 +322,15 @@ internal class PopupView: NSView {
         self.background.setFrameSize(size)
         self.body.setFrameSize(NSSize(
             width: size.width - (Constants.Popup.margins*2) + (isScrollVisible ? 20 : 0),
-            height: size.height - Constants.Popup.headerHeight - (Constants.Popup.margins*2)
+            height: size.height - self.chromeHeight - (Constants.Popup.margins*2)
         ))
-        self.header.setFrameOrigin(NSPoint(x: 0, y: size.height - Constants.Popup.headerHeight))
+        self.header.setFrameOrigin(NSPoint(x: 0, y: size.height - self.chromeHeight))
         
         if let view = view {
+            if self.foreground === self.background {
+                view.wantsLayer = true
+                view.layer?.backgroundColor = NSColor.clear.cgColor
+            }
             self.body.documentView = view
             view.sizeCallback = { [weak self] size in
                 self?.recalculateHeight(size)
@@ -314,7 +371,7 @@ internal class PopupView: NSView {
         var isScrollVisible: Bool = false
         var windowSize: NSSize = NSSize(
             width: size.width + (Constants.Popup.margins*2),
-            height: size.height + Constants.Popup.headerHeight + (Constants.Popup.margins*2)
+            height: size.height + self.chromeHeight + (Constants.Popup.margins*2)
         )
         let h0 = self.containerHeight ?? 0
         
@@ -333,7 +390,7 @@ internal class PopupView: NSView {
         self.background.setFrameSize(windowSize)
         self.body.setFrameSize(NSSize(
             width: windowSize.width - (Constants.Popup.margins*2) + (isScrollVisible ? 20 : 0),
-            height: windowSize.height - Constants.Popup.headerHeight - (Constants.Popup.margins*2)
+            height: windowSize.height - self.chromeHeight - (Constants.Popup.margins*2)
         ))
         self.header.setFrameOrigin(NSPoint(
             x: self.header.frame.origin.x,
@@ -348,6 +405,7 @@ internal class PopupView: NSView {
             ))
         }
     }
+
 }
 
 internal class HeaderView: NSStackView {
@@ -377,7 +435,7 @@ internal class HeaderView: NSStackView {
         activity.bezelStyle = .regularSquare
         activity.translatesAutoresizingMaskIntoConstraints = false
         activity.imageScaling = .scaleNone
-        activity.contentTintColor = .lightGray
+        activity.contentTintColor = .secondaryLabelColor
         activity.isBordered = false
         activity.target = self
         activity.focusRingType = .none
@@ -393,7 +451,9 @@ internal class HeaderView: NSStackView {
         title.backgroundColor = .clear
         title.canDrawSubviewsIntoLayer = true
         title.alignment = .center
-        title.font = NSFont.systemFont(ofSize: 16, weight: .regular)
+        // macOS popover title style: 13pt semibold reads as native chrome,
+        // not a window title bar
+        title.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
         title.stringValue = ""
         self.titleView = title
         
@@ -404,7 +464,7 @@ internal class HeaderView: NSStackView {
         settings.translatesAutoresizingMaskIntoConstraints = false
         settings.imageScaling = .scaleNone
         settings.image = iconFromSymbol(name: "command", scale: .large)
-        settings.contentTintColor = .lightGray
+        settings.contentTintColor = .secondaryLabelColor
         settings.isBordered = false
         settings.action = #selector(self.openSettings)
         settings.target = self

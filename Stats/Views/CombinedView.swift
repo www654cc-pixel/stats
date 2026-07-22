@@ -55,7 +55,7 @@ internal class CombinedView: NSObject, NSGestureRecognizerDelegate {
             }
         }
         
-        self.popup = PopupWindow(title: "Combined modules", module: .combined, view: Popup()) { _ in }
+        self.popup = PopupWindow(title: localizedString("System Overview"), module: .combined, view: Popup()) { _ in }
         
         if self.status {
             self.enable()
@@ -358,9 +358,10 @@ private class Popup: NSStackView, Popup_p {
 
     private let power: PowerFlowPortal = PowerFlowPortal()
     private let tiles: MetricTilesGrid = MetricTilesGrid()
-    private let clockRow: ClockRow = ClockRow()
+    private let calendar: CalendarPortal = CalendarPortal()
     private let proxy: ProxyPortal = ProxyPortal()
     private let launcher: LauncherPortal = LauncherPortal()
+    private let infoStrip: InfoStrip = InfoStrip()
     private var refreshTimer: Timer?
 
     init() {
@@ -371,7 +372,7 @@ private class Popup: NSStackView, Popup_p {
         self.orientation = .vertical
         self.distribution = .fill
         self.alignment = .width
-        self.spacing = Constants.Popup.spacing
+        self.spacing = 0
 
         self.power.onResize = { [weak self] in
             self?.recomputeHeight()
@@ -403,11 +404,13 @@ private class Popup: NSStackView, Popup_p {
     fileprivate func settings() -> NSView? { return nil }
     fileprivate func appear() {
         self.tiles.refresh()
-        self.clockRow.refresh()
+        self.calendar.refresh()
+        self.infoStrip.refresh()
         self.refreshTimer?.invalidate()
         self.refreshTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             self?.tiles.refresh()
-            self?.clockRow.refresh()
+            self?.calendar.refresh()
+            self?.infoStrip.refresh()
         }
         self.power.start()
         self.proxy.start()
@@ -430,28 +433,33 @@ private class Popup: NSStackView, Popup_p {
     @objc private func reinit() {
         self.subviews.forEach({ $0.removeFromSuperview() })
 
-        let spacing = Constants.Popup.spacing
+        let spacing = Design.gap
         // dashboard (single icon) mode gets the wide three-column layout,
         // the classic combined popup a narrower two-column one
         let dashboard = Store.shared.bool(key: "CombinedModules_icon", defaultValue: false)
         let columns = dashboard ? 3 : 2
-        let width = CGFloat(columns) * Constants.Popup.width + CGFloat(columns - 1) * spacing
+        let columnWidth: CGFloat = dashboard ? 316 : Constants.Popup.width
+        let width = CGFloat(columns) * columnWidth + CGFloat(columns - 1) * spacing
 
-        // power-flow (sankey) hero card on top
+        self.spacing = spacing
+
+        // power hero card on top
         self.power.setWidth(width)
         self.power.isHidden = !self.power.available
         self.addArrangedSubview(self.power)
 
-        // uniform metric tiles for the core modules
+        // metric tile grid — cards float on the glass, no divider needed
         self.tiles.rebuild(width: width)
         if !self.tiles.isEmpty {
             self.tiles.refresh()
             self.addArrangedSubview(self.tiles)
         }
 
-        // stock portals only for modules the unified cards don't cover (e.g. Bluetooth)
+        // stock portals only for modules the unified cards don't cover
+        // (e.g. Bluetooth). Quota is rendered as its own compact strip below,
+        // so it is excluded from this grid.
         let fallback: [Portal_p] = modules
-            .filter({ $0.enabled && $0.portal != nil && !Popup.coveredModules.contains($0.name) })
+            .filter({ $0.enabled && $0.portal != nil && !Popup.coveredModules.contains($0.name) && $0.name != "Quota" })
             .compactMap({ $0.portal })
         if !fallback.isEmpty {
             let grid = NSGridView()
@@ -480,18 +488,60 @@ private class Popup: NSStackView, Popup_p {
             self.addArrangedSubview(grid)
         }
 
-        // single-line world clock row
-        self.clockRow.refresh()
-        self.addArrangedSubview(self.clockRow)
+        // merged info strip: Quota (Kimi/Codex) + world clocks in one card
+        if let q = modules.first(where: { $0.name == "Quota" && $0.enabled })?.portal as? CombinedQuotaPortal {
+            self.infoStrip.bindQuota(q)
+        } else {
+            self.infoStrip.unbindQuota()
+        }
+        self.infoStrip.refresh()
 
-        // proxy status (mihomo), collapsed to one row; hides itself when unreachable
-        self.proxy.setWidth(width)
+        // The wide dashboard uses an asymmetric 2:1 context row: calendar on
+        // the left, quotas + world clocks on the right. This is the key Bento
+        // break in the composition; the classic two-column popup keeps the
+        // compact linear arrangement for compatibility.
+        if dashboard {
+            let sidebarWidth = columnWidth
+            let calendarWidth = width - sidebarWidth - spacing
+            let contextHeight: CGFloat = 252
+            self.calendar.setSize(width: calendarWidth, height: contextHeight)
+            self.infoStrip.setWidth(sidebarWidth, sidebar: true, height: contextHeight)
+            self.calendar.refresh()
+
+            let context = NSGridView(views: [[self.calendar, self.infoStrip]])
+            context.columnSpacing = spacing
+            context.rowSpacing = 0
+            context.column(at: 0).width = calendarWidth
+            context.column(at: 1).width = sidebarWidth
+            context.column(at: 0).xPlacement = .fill
+            context.column(at: 1).xPlacement = .fill
+            context.row(at: 0).height = contextHeight
+            context.row(at: 0).yPlacement = .fill
+            self.addArrangedSubview(context)
+        } else {
+            self.infoStrip.setWidth(width, sidebar: false, height: InfoStrip.compactHeight)
+            self.addArrangedSubview(self.infoStrip)
+            self.calendar.setSize(width: width, height: nil)
+            self.calendar.refresh()
+            self.addArrangedSubview(self.calendar)
+        }
+
+        // Compact utilities close the composition as one asymmetric row
+        // instead of two full-width tails with large empty regions.
+        let proxyWidth = (width - spacing) * 0.62
+        let launcherWidth = width - spacing - proxyWidth
+        self.proxy.setWidth(proxyWidth)
         self.proxy.isHidden = !self.proxy.reachable
-        self.addArrangedSubview(self.proxy)
-
-        // launcher: one row of app icons
-        self.launcher.setWidth(width)
-        self.addArrangedSubview(self.launcher)
+        self.launcher.setWidth(launcherWidth)
+        let utilities = NSGridView(views: [[self.proxy, self.launcher]])
+        utilities.columnSpacing = spacing
+        utilities.rowSpacing = 0
+        utilities.column(at: 0).width = proxyWidth
+        utilities.column(at: 1).width = launcherWidth
+        utilities.column(at: 0).xPlacement = .fill
+        utilities.column(at: 1).xPlacement = .fill
+        utilities.row(at: 0).yPlacement = .fill
+        self.addArrangedSubview(utilities)
 
         self.applySize(width: width)
     }
@@ -509,14 +559,28 @@ private class Popup: NSStackView, Popup_p {
     }
 }
 
-// MARK: - Clock row
+// MARK: - Info strip (Quota + Clock merged)
 
-// single-line world clock: "北京 07:04   莫斯科 07:04   墨西哥城 22:04 −1d"
-private class ClockRow: NSStackView {
-    static let height: CGFloat = 30
+// One horizontal card: the left ~46% shows the Quota mini-cells (Kimi 5h /
+// Kimi 周 / Codex), the right side shows the world clock row. Merges the
+// former two separate cards into a single 46px line, reclaiming ~50px.
+private class InfoStrip: NSStackView {
+    static let compactHeight: CGFloat = 46
 
-    private var entries: [(name: NSTextField, time: NSTextField, delta: NSTextField)] = []
-    private var names: [String] = []
+    private var quotaSource: CombinedQuotaPortal?
+    private var quotaCells: [QuotaCell] = []
+    private var quotaBox: NSStackView?
+    private var quotaSection: NSStackView?
+    private var quotaHeader: NSView?
+    private var quotaWidthConstraint: NSLayoutConstraint?
+    private var sectionDivider: NSBox?
+    private var heightConstraint: NSLayoutConstraint?
+    private var sidebarMode: Bool = false
+
+    private var clockEntries: [(name: NSTextField, time: NSTextField, delta: NSTextField)] = []
+    private var clockNames: [String] = []
+    private var clockBox: NSStackView?
+    private var latestReadings: [ClockReading] = []
 
     init() {
         super.init(frame: .zero)
@@ -527,72 +591,323 @@ private class ClockRow: NSStackView {
         self.orientation = .horizontal
         self.alignment = .centerY
         self.distribution = .fill
-        self.spacing = 16
-        self.edgeInsets = NSEdgeInsets(top: 0, left: 10, bottom: 0, right: 10)
-        self.heightAnchor.constraint(equalToConstant: ClockRow.height).isActive = true
+        self.spacing = 10
+        self.edgeInsets = NSEdgeInsets(top: 9, left: 14, bottom: 9, right: 12)
+        self.heightConstraint = self.heightAnchor.constraint(equalToConstant: InfoStrip.compactHeight)
+        self.heightConstraint?.isActive = true
+
+        // left: Quota (fixed share)
+        let quotaSection = NSStackView()
+        quotaSection.orientation = .vertical
+        quotaSection.alignment = .width
+        quotaSection.spacing = 8
+        quotaSection.setContentHuggingPriority(.required, for: .vertical)
+        quotaSection.setContentCompressionResistancePriority(.required, for: .vertical)
+
+        let quotaHeader = NSStackView()
+        quotaHeader.orientation = .horizontal
+        quotaHeader.alignment = .centerY
+        quotaHeader.spacing = 5
+        let quotaIcon = NSImageView()
+        quotaIcon.image = NSImage(systemSymbolName: "gauge.with.dots.needle.33percent", accessibilityDescription: nil)
+        quotaIcon.symbolConfiguration = .init(pointSize: 10, weight: .semibold)
+        quotaIcon.contentTintColor = .systemGreen
+        let quotaLabel = NSTextField(labelWithString: localizedString("Quota"))
+        quotaLabel.font = .systemFont(ofSize: 11, weight: .semibold)
+        quotaLabel.textColor = .secondaryLabelColor
+        quotaHeader.addArrangedSubview(quotaIcon)
+        quotaHeader.addArrangedSubview(quotaLabel)
+        quotaHeader.addArrangedSubview(NSView())
+        quotaSection.addArrangedSubview(quotaHeader)
+
+        let q = NSStackView()
+        q.orientation = .horizontal
+        q.alignment = .centerY
+        q.distribution = .fillEqually
+        q.spacing = 10
+        for title in ["Kimi 5h", "Kimi 周", "Codex"] {
+            let cell = QuotaCell(title: title)
+            self.quotaCells.append(cell)
+            q.addArrangedSubview(cell)
+        }
+        quotaSection.addArrangedSubview(q)
+        self.addArrangedSubview(quotaSection)
+        self.quotaBox = q
+        self.quotaSection = quotaSection
+        self.quotaHeader = quotaHeader
+
+        let divider = NSBox()
+        divider.boxType = .separator
+        divider.isHidden = true
+        self.addArrangedSubview(divider)
+        self.sectionDivider = divider
+
+        // right: Clock (remaining width)
+        let c = NSStackView()
+        c.orientation = .horizontal
+        c.alignment = .centerY
+        c.distribution = .fill
+        c.spacing = 9
+        self.addArrangedSubview(c)
+        self.clockBox = c
+
+        let click = NSClickGestureRecognizer(target: self, action: #selector(self.openQuotaPopup))
+        quotaSection.addGestureRecognizer(click)
     }
 
     required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
+        fatalError("init(coder:) has not implemented")
     }
 
     public override func updateLayer() {
         self.applyCardStyle()
     }
 
-    private func portal() -> CombinedClockPortal? {
+    // set after the strip is in the popup tree and its width is known; using a
+    // constant (not a multiplier on self.widthAnchor) avoids the mutually-
+    // exclusive Auto Layout constraint that fires during init
+    internal func setWidth(_ width: CGFloat, sidebar: Bool, height: CGFloat) {
+        self.sidebarMode = sidebar
+        self.orientation = sidebar ? .vertical : .horizontal
+        self.alignment = sidebar ? .width : .centerY
+        self.spacing = sidebar ? 10 : 10
+        self.edgeInsets = sidebar
+            ? NSEdgeInsets(top: 13, left: 14, bottom: 13, right: 14)
+            : NSEdgeInsets(top: 9, left: 14, bottom: 9, right: 12)
+        self.heightConstraint?.constant = height
+        self.quotaHeader?.isHidden = !sidebar
+        self.sectionDivider?.isHidden = !sidebar
+
+        self.quotaWidthConstraint?.isActive = false
+        self.quotaWidthConstraint = nil
+        if !sidebar {
+            self.quotaWidthConstraint = self.quotaSection?.widthAnchor.constraint(equalToConstant: width * 0.46)
+            self.quotaWidthConstraint?.isActive = true
+        }
+        self.clockBox?.orientation = sidebar ? .vertical : .horizontal
+        self.clockBox?.alignment = sidebar ? .width : .centerY
+        self.clockBox?.distribution = .fill
+        self.clockBox?.spacing = sidebar ? 8 : 9
+        self.rebuildClock(self.latestReadings)
+    }
+
+    func bindQuota(_ portal: CombinedQuotaPortal?) {
+        self.quotaSource = portal
+    }
+
+    func unbindQuota() {
+        self.quotaSource = nil
+    }
+
+    func refresh() {
+        // quota (left)
+        if let q = self.quotaSource {
+            self.quotaSection?.isHidden = false
+            InfoStrip.apply(quota: q, to: self.quotaCells)
+        } else {
+            self.quotaSection?.isHidden = true
+        }
+
+        // clock (right)
+        guard let readings = InfoStrip.clockPortal()?.clockReadings, !readings.isEmpty else {
+            self.clockBox?.isHidden = true
+            return
+        }
+        self.latestReadings = readings
+        self.clockBox?.isHidden = false
+        if readings.map({ $0.name }) != self.clockNames {
+            self.rebuildClock(readings)
+        }
+        for (i, r) in readings.enumerated() where i < self.clockEntries.count {
+            self.clockEntries[i].time.stringValue = r.time
+            self.clockEntries[i].delta.stringValue = r.dayDelta == 0 ? "" : String(format: "%+dd", r.dayDelta)
+        }
+    }
+
+    private static func clockPortal() -> CombinedClockPortal? {
         guard let m = modules.first(where: { $0.name == "Clock" && $0.enabled }) else { return nil }
         return m.portal as? CombinedClockPortal
     }
 
-    func refresh() {
-        guard let readings = self.portal()?.clockReadings, !readings.isEmpty else {
-            self.isHidden = true
-            return
+    private static func apply(quota q: CombinedQuotaPortal, to cells: [QuotaCell]) {
+        guard cells.count == 3 else { return }
+        if let p = q.kimiFiveHourPct {
+            cells[0].set(remainingPct: p, color: InfoStrip.quotaColor(p))
+        } else {
+            cells[0].set(remainingPct: nil, color: .lightGray)
         }
-        self.isHidden = false
-
-        if readings.map({ $0.name }) != self.names {
-            self.rebuild(readings)
+        if let p = q.kimiWeeklyPct {
+            cells[1].set(remainingPct: p, color: InfoStrip.quotaColor(p))
+        } else {
+            cells[1].set(remainingPct: nil, color: .lightGray)
         }
-        for (i, r) in readings.enumerated() where i < self.entries.count {
-            self.entries[i].time.stringValue = r.time
-            self.entries[i].delta.stringValue = r.dayDelta == 0 ? "" : String(format: "%+dd", r.dayDelta)
+        if let p = q.codexRemainingPct {
+            cells[2].set(remainingPct: p, color: InfoStrip.quotaColor(p))
+        } else if let e = q.codexError, !e.isEmpty {
+            cells[2].setError(e)
+        } else {
+            cells[2].set(remainingPct: nil, color: .lightGray)
         }
     }
 
-    private func rebuild(_ readings: [ClockReading]) {
-        self.subviews.forEach { $0.removeFromSuperview() }
-        self.entries = []
-        self.names = readings.map { $0.name }
+    private func rebuildClock(_ readings: [ClockReading]) {
+        guard let box = self.clockBox else { return }
+        box.subviews.forEach { $0.removeFromSuperview() }
+        self.clockEntries = []
+        self.clockNames = readings.map { $0.name }
 
-        let icon = NSImageView()
-        icon.image = NSImage(systemSymbolName: "clock", accessibilityDescription: nil)
-        icon.symbolConfiguration = .init(pointSize: 10, weight: .medium)
-        icon.contentTintColor = .tertiaryLabelColor
-        self.addArrangedSubview(icon)
+        if self.sidebarMode {
+            let title = NSStackView()
+            title.orientation = .horizontal
+            title.alignment = .centerY
+            title.spacing = 5
+            let icon = NSImageView()
+            icon.image = NSImage(systemSymbolName: "clock", accessibilityDescription: nil)
+            icon.symbolConfiguration = .init(pointSize: 10, weight: .semibold)
+            icon.contentTintColor = .systemBlue
+            let label = NSTextField(labelWithString: localizedString("World Clocks"))
+            label.font = .systemFont(ofSize: 11, weight: .semibold)
+            label.textColor = .secondaryLabelColor
+            title.addArrangedSubview(icon)
+            title.addArrangedSubview(label)
+            title.addArrangedSubview(NSView())
+            box.addArrangedSubview(title)
+        } else {
+            let icon = NSImageView()
+            icon.image = NSImage(systemSymbolName: "clock", accessibilityDescription: nil)
+            icon.symbolConfiguration = .init(pointSize: 11, weight: .medium)
+            icon.contentTintColor = .tertiaryLabelColor
+            box.addArrangedSubview(icon)
+        }
 
         for r in readings {
             let block = NSStackView()
             block.orientation = .horizontal
-            block.spacing = 5
+            block.alignment = .firstBaseline
+            block.spacing = 4
 
             let name = NSTextField(labelWithString: r.name)
-            name.font = r.isLocal ? .systemFont(ofSize: 10, weight: .bold) : .systemFont(ofSize: 10)
+            name.font = .systemFont(ofSize: 11, weight: .regular)
             name.textColor = r.isLocal ? .systemBlue : .secondaryLabelColor
             let time = NSTextField(labelWithString: r.time)
-            time.font = .monospacedDigitSystemFont(ofSize: 12, weight: r.isLocal ? .bold : .semibold)
-            if r.isLocal { time.textColor = .systemBlue }
+            time.font = .monospacedDigitSystemFont(ofSize: 12.5, weight: r.isLocal ? .semibold : .medium)
+            time.textColor = .labelColor
             let delta = NSTextField(labelWithString: "")
-            delta.font = .monospacedDigitSystemFont(ofSize: 9, weight: .regular)
-            delta.textColor = .tertiaryLabelColor
+            delta.font = .monospacedDigitSystemFont(ofSize: 9.5, weight: .regular)
+            delta.textColor = .secondaryLabelColor
+            delta.alignment = .right
+            delta.widthAnchor.constraint(equalToConstant: 24).isActive = true
 
             block.addArrangedSubview(name)
+            if self.sidebarMode { block.addArrangedSubview(NSView()) }
             block.addArrangedSubview(time)
             block.addArrangedSubview(delta)
-            self.addArrangedSubview(block)
-            self.entries.append((name, time, delta))
+            box.addArrangedSubview(block)
+            self.clockEntries.append((name, time, delta))
         }
-        self.addArrangedSubview(NSView())
+        if self.sidebarMode {
+            box.addArrangedSubview(NSView())
+        }
+    }
+
+    @objc private func openQuotaPopup() {
+        guard let window = self.window else { return }
+        let rect = window.convertToScreen(self.convert(self.bounds, to: nil))
+        NotificationCenter.default.post(name: .togglePopup, object: nil, userInfo: [
+            "module": "Quota",
+            "origin": rect.origin,
+            "center": rect.width / 2
+        ])
+    }
+
+    private static func quotaColor(_ pct: Double) -> NSColor {
+        if pct > 50 { return Design.good }
+        if pct >= 20 { return Design.warn }
+        return Design.critical
+    }
+}
+
+private class QuotaCell: NSStackView {
+    private let bar = QuotaMiniBar()
+    private let valueField: NSTextField
+
+    init(title: String) {
+        self.valueField = NSTextField(labelWithString: "—")
+        self.valueField.font = .monospacedDigitSystemFont(ofSize: 11, weight: .semibold)
+        self.valueField.alignment = .right
+        self.valueField.textColor = .labelColor
+
+        super.init(frame: .zero)
+
+        self.orientation = .horizontal
+        self.alignment = .centerY
+        self.distribution = .fill
+        self.spacing = 5
+
+        let lab = NSTextField(labelWithString: title)
+        lab.font = Design.subFont
+        lab.textColor = .secondaryLabelColor
+
+        self.bar.heightAnchor.constraint(equalToConstant: 6).isActive = true
+
+        self.addArrangedSubview(lab)
+        self.addArrangedSubview(self.bar)
+        self.addArrangedSubview(self.valueField)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not implemented")
+    }
+
+    func set(remainingPct: Double?, color: NSColor) {
+        if let p = remainingPct {
+            self.bar.set(fraction: p / 100, color: color)
+            self.valueField.stringValue = "\(Int(p.rounded()))%"
+        } else {
+            self.bar.set(fraction: 0, color: .lightGray)
+            self.valueField.stringValue = "—"
+        }
+    }
+
+    func setError(_ message: String) {
+        self.bar.set(fraction: 0, color: .systemRed)
+        self.valueField.stringValue = "!"
+        self.toolTip = message
+    }
+}
+
+private class QuotaMiniBar: NSView {
+    private var fraction: Double = 0
+    private var color: NSColor = .lightGray
+
+    func set(fraction: Double, color: NSColor) {
+        self.fraction = max(0, min(fraction, 1))
+        self.color = color
+        self.needsDisplay = true
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard self.bounds.height > 0 else { return }
+        let radius = self.bounds.height / 2
+        let track = NSBezierPath(roundedRect: self.bounds, xRadius: radius, yRadius: radius)
+        Design.track.setFill()
+        track.fill()
+
+        guard self.fraction > 0 else { return }
+
+        let w = max(self.bounds.width * CGFloat(self.fraction), self.bounds.height)
+        let fill = NSBezierPath(roundedRect: NSRect(x: 0, y: 0, width: w, height: self.bounds.height), xRadius: radius, yRadius: radius)
+
+        let lighter = self.color.highlight(withLevel: 0.25) ?? self.color
+        let grad = NSGradient(starting: lighter, ending: self.color)
+
+        NSGraphicsContext.saveGraphicsState()
+        let glow = NSShadow()
+        glow.shadowColor = self.color.withAlphaComponent(0.35)
+        glow.shadowBlurRadius = 3
+        glow.shadowOffset = .zero
+        glow.set()
+        grad?.draw(in: fill, angle: 90)
+        NSGraphicsContext.restoreGraphicsState()
     }
 }
