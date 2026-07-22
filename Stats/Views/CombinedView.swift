@@ -55,7 +55,12 @@ internal class CombinedView: NSObject, NSGestureRecognizerDelegate {
             }
         }
         
-        self.popup = PopupWindow(title: localizedString("System Overview"), module: .combined, view: Popup()) { _ in }
+        self.popup = PopupWindow(title: localizedString("System Overview"), module: .combined, view: Popup()) { [weak self] state in
+            self?.popupVisible = state
+            if !state {
+                self?.refreshPowerIcon()
+            }
+        }
         
         if self.status {
             self.enable()
@@ -242,15 +247,20 @@ internal class CombinedView: NSObject, NSGestureRecognizerDelegate {
         self.menuBarItem?.length = w
     }
     
-    // call when popup appear/disappear
-    private func visibilityCallback(_ state: Bool) {}
-    
     @objc private func togglePopup(_ sender: NSButton) {
         guard let popup = self.popup, let item = self.menuBarItem, let window = item.button?.window else { return }
+
+        // Clicking the status item while the popup is open first makes the
+        // popup resign key, then delivers this button action. In that event
+        // order, the resign handler already closed it; do not reopen it.
+        if popup.consumeRecentResignDismissal() {
+            return
+        }
+
         let openedWindows = NSApplication.shared.windows.filter{ $0 is NSPanel }
         openedWindows.forEach{ $0.setIsVisible(false) }
-        
-        if popup.occlusionState.rawValue == 8192 {
+
+        if !popup.isVisible {
             NSApplication.shared.activate(ignoringOtherApps: true)
             
             popup.contentView?.invalidateIntrinsicContentSize()
@@ -270,14 +280,11 @@ internal class CombinedView: NSObject, NSGestureRecognizerDelegate {
             }
             
             popup.setFrameOrigin(NSPoint(x: x, y: y))
-            popup.setIsVisible(true)
+            popup.makeKeyAndOrderFront(nil)
             self.popupVisible = true
         } else {
-            popup.setIsVisible(false)
+            popup.orderOut(nil)
             self.popupVisible = false
-            // refresh the icon once now that the popup closed, so the menubar
-            // catches up immediately instead of waiting up to 3 s
-            self.refreshPowerIcon()
         }
     }
     

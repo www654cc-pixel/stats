@@ -83,6 +83,12 @@ public class PopupWindow: NSWindow, NSWindowDelegate {
     // Callers can suspend auto-dismiss while those surfaces are tracking.
     public var locked: Bool = false
     internal var openedBy: widget_t? = nil
+    private var lastResignDismissal: Date? = nil
+
+    // Borderless windows do not become key by default. The combined dashboard
+    // must become key so AppKit can deliver windowDidResignKey when the user
+    // clicks anywhere else.
+    public override var canBecomeKey: Bool { true }
     
     public init(title: String, module: ModuleType, view: Popup_p?, visibilityCallback: @escaping (_ state: Bool) -> Void) {
         self.viewController = PopupViewController(module: module)
@@ -140,14 +146,37 @@ public class PopupWindow: NSWindow, NSWindowDelegate {
             return
         }
         
+        self.lastResignDismissal = Date()
         self.viewController.setCloseButton(false)
-        self.setIsVisible(false)
+        self.orderOut(nil)
+    }
+
+    public func consumeRecentResignDismissal(maxAge: TimeInterval = 0.25) -> Bool {
+        guard let dismissedAt = self.lastResignDismissal else { return false }
+        self.lastResignDismissal = nil
+        return Date().timeIntervalSince(dismissedAt) <= maxAge
+    }
+
+    public override func makeKeyAndOrderFront(_ sender: Any?) {
+        super.makeKeyAndOrderFront(sender)
+        // Re-ordering an existing borderless window does not reliably invoke
+        // viewWillAppear, so explicitly resume its popup lifecycle.
+        self.viewController.setPresented(true)
+    }
+
+    public override func orderOut(_ sender: Any?) {
+        super.orderOut(sender)
+        // AppKit does not consistently send viewWillDisappear when a
+        // borderless window is ordered out. Explicitly end the popup
+        // lifecycle so view-owned timers cannot keep running off-screen.
+        self.viewController.setPresented(false)
     }
 }
 
 internal class PopupViewController: NSViewController {
     fileprivate var visibilityCallback: (_ state: Bool) -> Void = {_ in }
     private var popup: PopupView
+    private var presented: Bool = false
     
     public init(module: ModuleType) {
         self.popup = PopupView(frame: NSRect(
@@ -169,18 +198,25 @@ internal class PopupViewController: NSViewController {
     
     override func viewWillAppear() {
         super.viewWillAppear()
-        
-        self.popup.appear()
-        self.visibilityCallback(true)
-        NotificationCenter.default.post(name: .popupVisibilityChanged, object: nil, userInfo: ["state": true])
+        self.setPresented(true)
     }
     
     override func viewWillDisappear() {
         super.viewWillDisappear()
-        
-        self.popup.disappear()
-        self.visibilityCallback(false)
-        NotificationCenter.default.post(name: .popupVisibilityChanged, object: nil, userInfo: ["state": false])
+        self.setPresented(false)
+    }
+
+    fileprivate func setPresented(_ state: Bool) {
+        guard state != self.presented else { return }
+        self.presented = state
+
+        if state {
+            self.popup.appear()
+        } else {
+            self.popup.disappear()
+        }
+        self.visibilityCallback(state)
+        NotificationCenter.default.post(name: .popupVisibilityChanged, object: nil, userInfo: ["state": state])
     }
     
     fileprivate func setup(title: String, view: Popup_p?) {

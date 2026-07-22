@@ -161,12 +161,19 @@ internal class ProxyPortal: NSStackView {
         let selected = menu.items.first(where: { $0.state == .on })
         let popupWindow = self.window as? PopupWindow
         popupWindow?.locked = true
-        menu.popUp(
+        let didSelect = menu.popUp(
             positioning: selected,
             at: NSPoint(x: self.header.bounds.maxX - 18, y: self.header.bounds.minY),
             in: self.header
         )
         popupWindow?.locked = false
+        if didSelect {
+            // Re-arm the parent's resign-key auto-dismiss after menu tracking.
+            popupWindow?.makeKey()
+        } else {
+            // Clicking outside the menu is also an outside click for the panel.
+            popupWindow?.orderOut(nil)
+        }
         self.openNodesMenu = nil
         self.chevron.image = NSImage(systemSymbolName: "chevron.down", accessibilityDescription: nil)
     }
