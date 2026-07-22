@@ -84,7 +84,8 @@ public protocol CombinedQuotaPortal: AnyObject {
     // nil means the source was not configured / not yet read.
     var kimiFiveHourPct: Double? { get }
     var kimiWeeklyPct: Double? { get }
-    var codexRemainingPct: Double? { get }   // 100 - utilization, or nil
+    var codexFiveHourRemainingPct: Double? { get } // reserved for when Codex restores this window
+    var codexWeeklyRemainingPct: Double? { get }   // 100 - weekly utilization, or nil
     var codexError: String? { get }
 }
 

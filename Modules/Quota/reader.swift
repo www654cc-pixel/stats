@@ -20,6 +20,7 @@ import Kit
 
 public struct CodexWindow: Codable {
     var name: String
+    var durationSeconds: Int64? // API window identity; optional keeps older snapshots decodable
     var utilization: Double      // 0-100 (consumed %)
     var resetsAt: String?        // human readable reset time
 }
@@ -28,6 +29,14 @@ public struct CodexQuota: Codable {
     var windows: [CodexWindow] = []
     var accountId: String?
     var error: String?
+
+    var fiveHourWindow: CodexWindow? {
+        self.windows.first { $0.durationSeconds == 18_000 }
+    }
+
+    var weeklyWindow: CodexWindow? {
+        self.windows.first { $0.durationSeconds == 604_800 }
+    }
 }
 
 public struct KimiQuota: Codable {
@@ -302,7 +311,12 @@ public class QuotaReader: Reader<QuotaData> {
             if let ts = w["reset_at"] as? Int64 {
                 resets = Self.shortDate(TimeInterval(ts))
             }
-            return CodexWindow(name: Self.windowName(secs), utilization: used, resetsAt: resets)
+            return CodexWindow(
+                name: Self.windowName(secs),
+                durationSeconds: secs,
+                utilization: used,
+                resetsAt: resets
+            )
         }
 
         if let pw = parseWindow(rl["primary_window"] as? [String: Any]) { result.windows.append(pw) }

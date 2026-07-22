@@ -569,7 +569,7 @@ private class Popup: NSStackView, Popup_p {
 // MARK: - Info strip (Quota + Clock merged)
 
 // One horizontal card: the left ~46% shows the Quota mini-cells (Kimi 5h /
-// Kimi 周 / Codex), the right side shows the world clock row. Merges the
+// Kimi 周 / Codex 周), the right side shows the world clock row. Merges the
 // former two separate cards into a single 46px line, reclaiming ~50px.
 private class InfoStrip: NSStackView {
     static let compactHeight: CGFloat = 46
@@ -632,7 +632,11 @@ private class InfoStrip: NSStackView {
         q.alignment = .centerY
         q.distribution = .fillEqually
         q.spacing = 10
-        for title in ["Kimi 5h", "Kimi 周", "Codex"] {
+        for title in [
+            localizedString("Quota Kimi 5h"),
+            localizedString("Quota Kimi weekly"),
+            localizedString("Quota Codex weekly")
+        ] {
             let cell = QuotaCell(title: title)
             self.quotaCells.append(cell)
             q.addArrangedSubview(cell)
@@ -754,7 +758,7 @@ private class InfoStrip: NSStackView {
         } else {
             cells[1].set(remainingPct: nil, color: .lightGray)
         }
-        if let p = q.codexRemainingPct {
+        if let p = q.codexWeeklyRemainingPct {
             cells[2].set(remainingPct: p, color: InfoStrip.quotaColor(p))
         } else if let e = q.codexError, !e.isEmpty {
             cells[2].setError(e)

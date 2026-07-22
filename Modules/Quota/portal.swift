@@ -78,7 +78,8 @@ public class Portal: PortalWrapper, CombinedQuotaPortal {
     // snapshot for the combined overview's compact strip (CombinedQuotaPortal)
     private var snapKimi5h: Double?
     private var snapKimiWeek: Double?
-    private var snapCodexRem: Double?
+    private var snapCodex5hRem: Double?
+    private var snapCodexWeekRem: Double?
     private var snapCodexErr: String?
 
     public override func load() {
@@ -95,7 +96,7 @@ public class Portal: PortalWrapper, CombinedQuotaPortal {
 
         (self.kimi5hBar, self.kimi5hField)   = Self.makeRow(into: rows, label: "Kimi 5h")
         (self.kimiWeekBar, self.kimiWeekField) = Self.makeRow(into: rows, label: "Kimi 周")
-        (self.codexBar, self.codexField)     = Self.makeRow(into: rows, label: "Codex")
+        (self.codexBar, self.codexField)     = Self.makeRow(into: rows, label: localizedString("Quota Codex weekly"))
 
         self.addArrangedSubview(rows)
     }
@@ -159,24 +160,28 @@ public class Portal: PortalWrapper, CombinedQuotaPortal {
         }
 
         // --- Codex ---
-        if let c = value.codex, let w = c.windows.first {
+        // The API historically exposed both 5-hour and weekly windows. Select
+        // by duration so restoring the 5-hour window cannot replace the weekly
+        // value in the combined dashboard merely by changing response order.
+        self.snapCodex5hRem = value.codex?.fiveHourWindow.map { max(0, 100 - $0.utilization) }
+        if let c = value.codex, let w = c.weeklyWindow {
             let rem = max(0, 100 - w.utilization)
             self.codexBar?.value = rem / 100
             self.codexBar?.color = Self.quotaColor(rem)
             self.codexField?.stringValue = "\(Int(rem.rounded()))%"
-            self.snapCodexRem = rem
+            self.snapCodexWeekRem = rem
             self.snapCodexErr = nil
         } else if let c = value.codex, let e = c.error, !e.isEmpty {
             self.codexBar?.value = 0
             self.codexBar?.color = .systemRed
             self.codexField?.stringValue = e
             self.snapCodexErr = e
-            self.snapCodexRem = nil
+            self.snapCodexWeekRem = nil
         } else {
             self.codexBar?.value = 0
             self.codexBar?.color = .lightGray
             self.codexField?.stringValue = "—"
-            self.snapCodexRem = nil
+            self.snapCodexWeekRem = nil
             self.snapCodexErr = nil
         }
     }
@@ -185,6 +190,7 @@ public class Portal: PortalWrapper, CombinedQuotaPortal {
 
     public var kimiFiveHourPct: Double? { self.snapKimi5h }
     public var kimiWeeklyPct: Double? { self.snapKimiWeek }
-    public var codexRemainingPct: Double? { self.snapCodexRem }
+    public var codexFiveHourRemainingPct: Double? { self.snapCodex5hRem }
+    public var codexWeeklyRemainingPct: Double? { self.snapCodexWeekRem }
     public var codexError: String? { self.snapCodexErr }
 }
