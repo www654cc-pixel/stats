@@ -104,6 +104,13 @@ public class QuotaReader: Reader<QuotaData> {
         return URLSession(configuration: cfg)
     }()
 
+    public override func setup() {
+        // Keep the reader's fallback aligned with the value shown in Settings.
+        // Reader defaults to one second, which would otherwise poll both remote
+        // quota APIs continuously until the user explicitly chose an interval.
+        self.defaultInterval = 600
+    }
+
     public override func read() {
         let group = DispatchGroup()
         var kimi: KimiQuota?
