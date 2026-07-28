@@ -332,6 +332,9 @@ public class SWidget {
                 restoreNSStatusItemPosition(id: "\(self.module)_\(self.type.rawValue)")
             }
             DispatchQueue.main.async(execute: {
+                if let old = self.menuBarItem {
+                    NSStatusBar.system.removeStatusItem(old)
+                }
                 self.menuBarItem = NSStatusBar.system.statusItem(withLength: self.item.frame.width)
                 DispatchQueue.main.async(execute: {
                     self.menuBarItem?.autosaveName = "\(self.module)_\(self.type.rawValue)"
@@ -481,6 +484,9 @@ public class MenuBar {
         DispatchQueue.main.async(execute: {
             if state && self.active {
                 restoreNSStatusItemPosition(id: self.moduleName)
+                if let old = self.menuBarItem {
+                    NSStatusBar.system.removeStatusItem(old)
+                }
                 self.menuBarItem = NSStatusBar.system.statusItem(withLength: 0)
                 DispatchQueue.main.async(execute: {
                     self.menuBarItem?.autosaveName = self.moduleName

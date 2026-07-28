@@ -341,6 +341,9 @@ extension AppDelegate {
     
     internal func icon() {
         if self.pauseState {
+            if let old = self.menuBarItem {
+                NSStatusBar.system.removeStatusItem(old)
+            }
             self.menuBarItem = NSStatusBar.system.statusItem(withLength: AppIcon.size.width)
             DispatchQueue.main.async(execute: {
                 self.menuBarItem?.autosaveName = "Stats"
