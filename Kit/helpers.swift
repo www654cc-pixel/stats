@@ -2435,3 +2435,50 @@ public struct UserContext {
         return CFPreferencesCopyAppValue("NSStatusItem Visible FocusModes" as CFString, "com.apple.controlcenter" as CFString) as? Bool ?? false
     }
 }
+
+/// Compact, deterministic remaining-time text for quota reset deadlines.
+/// `now` is injectable so display behavior remains unit-testable.
+public enum QuotaCountdownFormatter {
+    /// Parses the two timestamp variants returned by Kimi's usage API.
+    public static func date(fromISO8601 value: String?) -> Date? {
+        guard let value, !value.isEmpty else { return nil }
+
+        let withFractionalSeconds = ISO8601DateFormatter()
+        withFractionalSeconds.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = withFractionalSeconds.date(from: value) {
+            return date
+        }
+
+        let wholeSeconds = ISO8601DateFormatter()
+        wholeSeconds.formatOptions = [.withInternetDateTime]
+        return wholeSeconds.date(from: value)
+    }
+
+    public static func text(until deadline: Date?, now: Date = Date()) -> String? {
+        guard let deadline else { return nil }
+
+        let remaining = Int(deadline.timeIntervalSince(now))
+        guard remaining > 0 else { return localizedString("Quota countdown imminent") }
+
+        let days = remaining / 86_400
+        if days > 0 {
+            let hours = (remaining % 86_400) / 3_600
+            return hours > 0
+                ? localizedString("Quota countdown day hour", "\(days)", "\(hours)")
+                : localizedString("Quota countdown day", "\(days)")
+        }
+
+        let hours = remaining / 3_600
+        if hours > 0 {
+            let minutes = (remaining % 3_600) / 60
+            return minutes > 0
+                ? localizedString("Quota countdown hour minute", "\(hours)", "\(minutes)")
+                : localizedString("Quota countdown hour", "\(hours)")
+        }
+
+        let minutes = remaining / 60
+        return minutes > 0
+            ? localizedString("Quota countdown minute", "\(minutes)")
+            : localizedString("Quota countdown under minute")
+    }
+}

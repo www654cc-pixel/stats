@@ -567,3 +567,10 @@
 "Quota Kimi 5h" = "Kimi 5h";
 "Quota Kimi weekly" = "Kimi 周";
 "Quota Codex weekly" = "Codex 周";
+"Quota countdown imminent" = "即将重置";
+"Quota countdown minute" = "%0分";
+"Quota countdown under minute" = "不足1分";
+"Quota countdown hour" = "%0时";
+"Quota countdown hour minute" = "%0时 %1分";
+"Quota countdown day" = "%0天";
+"Quota countdown day hour" = "%0天 %1时";

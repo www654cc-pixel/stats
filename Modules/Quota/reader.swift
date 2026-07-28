@@ -22,7 +22,8 @@ public struct CodexWindow: Codable {
     var name: String
     var durationSeconds: Int64? // API window identity; optional keeps older snapshots decodable
     var utilization: Double      // 0-100 (consumed %)
-    var resetsAt: String?        // human readable reset time
+    var resetsAt: String?        // human readable reset time for the standalone Quota popup
+    var resetAt: Date?           // original deadline retained for the dashboard's live countdown
 }
 
 public struct CodexQuota: Codable {
@@ -44,11 +45,13 @@ public struct KimiQuota: Codable {
     var fiveHourLimit: Double?
     var fiveHourRemaining: Double?
     var fiveHourReset: String?
+    var fiveHourResetAt: Date?
     // 周/套餐额度 (usage)
     var weeklyLimit: Double?
     var weeklyUsed: Double?
     var weeklyRemaining: Double?
     var weeklyReset: String?
+    var weeklyResetAt: Date?
     var planTier: String?
     var accountStatus: String?
 
@@ -196,7 +199,8 @@ public class QuotaReader: Reader<QuotaData> {
                 q.weeklyLimit = Self.toDouble(usage["limit"])
                 q.weeklyUsed = Self.toDouble(usage["used"])
                 q.weeklyRemaining = Self.toDouble(usage["remaining"])
-                q.weeklyReset = Self.isoToReadable(usage["resetTime"] as? String)
+                q.weeklyResetAt = QuotaCountdownFormatter.date(fromISO8601: usage["resetTime"] as? String)
+                q.weeklyReset = q.weeklyResetAt.map(Self.shortDate) ?? (usage["resetTime"] as? String)
             }
 
             // 5 小时窗口 (limits[] 中 window.duration==300 分钟 == 18000s)
@@ -209,15 +213,18 @@ public class QuotaReader: Reader<QuotaData> {
                     let detail = l["detail"] as? [String: Any]
                     let lim = Self.toDouble(detail?["limit"])
                     let rem = Self.toDouble(detail?["remaining"])
-                    let reset = Self.isoToReadable(detail?["resetTime"] as? String)
+                    let resetAt = QuotaCountdownFormatter.date(fromISO8601: detail?["resetTime"] as? String)
+                    let reset = resetAt.map(Self.shortDate) ?? (detail?["resetTime"] as? String)
                     if secs == 18000 {
                         q.fiveHourLimit = lim
                         q.fiveHourRemaining = rem
                         q.fiveHourReset = reset
+                        q.fiveHourResetAt = resetAt
                     } else if secs >= 604800 {
                         q.weeklyLimit = lim
                         q.weeklyRemaining = rem
                         q.weeklyReset = reset
+                        q.weeklyResetAt = resetAt
                     }
                 }
             }
@@ -307,15 +314,13 @@ public class QuotaReader: Reader<QuotaData> {
         func parseWindow(_ w: [String: Any]?) -> CodexWindow? {
             guard let w, let used = w["used_percent"] as? Double else { return nil }
             let secs = w["limit_window_seconds"] as? Int64 ?? 0
-            var resets: String?
-            if let ts = w["reset_at"] as? Int64 {
-                resets = Self.shortDate(TimeInterval(ts))
-            }
+            let resetAt = (w["reset_at"] as? Int64).map { Date(timeIntervalSince1970: TimeInterval($0)) }
             return CodexWindow(
                 name: Self.windowName(secs),
                 durationSeconds: secs,
                 utilization: used,
-                resetsAt: resets
+                resetsAt: resetAt.map(Self.shortDate),
+                resetAt: resetAt
             )
         }
 
@@ -494,21 +499,14 @@ public class QuotaReader: Reader<QuotaData> {
         }
     }
 
-    private static func shortDate(_ ts: TimeInterval) -> String {
-        let d = Date(timeIntervalSince1970: ts)
+    private static func shortDate(_ date: Date) -> String {
         let fmt = DateFormatter()
         fmt.dateFormat = "MM-dd HH:mm"
-        return fmt.string(from: d)
+        return fmt.string(from: date)
     }
 
     private static func isoToReadable(_ iso: String?) -> String? {
         guard let iso else { return nil }
-        let f = ISO8601DateFormatter()
-        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        guard let d = f.date(from: iso) else { return iso }
-        let out = DateFormatter()
-        out.dateFormat = "MM-dd HH:mm"
-        out.timeZone = .current
-        return out.string(from: d)
+        return QuotaCountdownFormatter.date(fromISO8601: iso).map(Self.shortDate) ?? iso
     }
 }

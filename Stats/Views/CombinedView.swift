@@ -572,7 +572,7 @@ private class Popup: NSStackView, Popup_p {
 // Kimi 周 / Codex 周), the right side shows the world clock row. Merges the
 // former two separate cards into a single 46px line, reclaiming ~50px.
 private class InfoStrip: NSStackView {
-    static let compactHeight: CGFloat = 46
+    static let compactHeight: CGFloat = 62
 
     private var quotaSource: CombinedQuotaPortal?
     private var quotaCells: [QuotaCell] = []
@@ -765,6 +765,9 @@ private class InfoStrip: NSStackView {
         } else {
             cells[2].set(remainingPct: nil, color: .lightGray)
         }
+        cells[0].set(countdownUntil: q.kimiFiveHourResetAt)
+        cells[1].set(countdownUntil: q.kimiWeeklyResetAt)
+        cells[2].set(countdownUntil: q.codexWeeklyResetAt)
     }
 
     private func rebuildClock(_ readings: [ClockReading]) {
@@ -848,8 +851,10 @@ private class QuotaCell: NSStackView {
     private let bar = QuotaMiniBar()
     private let titleField: NSTextField
     private let valueField: NSTextField
+    private let resetField: NSTextField
     private var titleWidthConstraint: NSLayoutConstraint?
     private var valueWidthConstraint: NSLayoutConstraint?
+    private var resetWidthConstraint: NSLayoutConstraint?
 
     init(title: String) {
         self.titleField = NSTextField(labelWithString: title)
@@ -861,6 +866,14 @@ private class QuotaCell: NSStackView {
         self.valueField.font = .monospacedDigitSystemFont(ofSize: 11.5, weight: .semibold)
         self.valueField.alignment = .right
         self.valueField.textColor = .labelColor
+
+        self.resetField = NSTextField(labelWithString: "")
+        self.resetField.font = .monospacedDigitSystemFont(ofSize: 10, weight: .medium)
+        self.resetField.alignment = .right
+        self.resetField.textColor = Design.mutedTextColor
+        self.resetField.isHidden = true
+        self.resetField.lineBreakMode = .byTruncatingTail
+        self.resetField.setContentCompressionResistancePriority(.required, for: .horizontal)
 
         super.init(frame: .zero)
 
@@ -876,8 +889,10 @@ private class QuotaCell: NSStackView {
     func configure(sidebar: Bool) {
         self.titleWidthConstraint?.isActive = false
         self.valueWidthConstraint?.isActive = false
+        self.resetWidthConstraint?.isActive = false
         self.titleWidthConstraint = nil
         self.valueWidthConstraint = nil
+        self.resetWidthConstraint = nil
         self.arrangedSubviews.forEach {
             self.removeArrangedSubview($0)
             $0.removeFromSuperview()
@@ -892,11 +907,14 @@ private class QuotaCell: NSStackView {
             self.spacing = 8
             self.titleWidthConstraint = self.titleField.widthAnchor.constraint(equalToConstant: 54)
             self.valueWidthConstraint = self.valueField.widthAnchor.constraint(equalToConstant: 38)
+            self.resetWidthConstraint = self.resetField.widthAnchor.constraint(equalToConstant: 58)
             self.titleWidthConstraint?.isActive = true
             self.valueWidthConstraint?.isActive = true
+            self.resetWidthConstraint?.isActive = true
             self.addArrangedSubview(self.titleField)
             self.addArrangedSubview(self.bar)
             self.addArrangedSubview(self.valueField)
+            self.addArrangedSubview(self.resetField)
         } else {
             // Compact mode keeps three equal mini gauges. Text owns the first
             // line and the complete track gets the second line.
@@ -913,6 +931,7 @@ private class QuotaCell: NSStackView {
             header.addArrangedSubview(self.valueField)
             self.addArrangedSubview(header)
             self.addArrangedSubview(self.bar)
+            self.addArrangedSubview(self.resetField)
         }
     }
 
@@ -935,6 +954,18 @@ private class QuotaCell: NSStackView {
         self.valueField.stringValue = "!"
         self.valueField.textColor = .systemRed
         self.toolTip = message
+    }
+
+    /// Called by InfoStrip's one-second refresh timer. This recomputes display
+    /// text locally; it never causes an additional quota API request.
+    func set(countdownUntil deadline: Date?) {
+        guard let text = QuotaCountdownFormatter.text(until: deadline) else {
+            self.resetField.isHidden = true
+            self.resetField.stringValue = ""
+            return
+        }
+        self.resetField.isHidden = false
+        self.resetField.stringValue = text
     }
 }
 

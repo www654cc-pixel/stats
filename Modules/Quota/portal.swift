@@ -81,6 +81,9 @@ public class Portal: PortalWrapper, CombinedQuotaPortal {
     private var snapCodex5hRem: Double?
     private var snapCodexWeekRem: Double?
     private var snapCodexErr: String?
+    private var snapKimi5hResetAt: Date?
+    private var snapKimiWeekResetAt: Date?
+    private var snapCodexWeekResetAt: Date?
 
     public override func load() {
         let rows = NSStackView()
@@ -148,6 +151,8 @@ public class Portal: PortalWrapper, CombinedQuotaPortal {
             self.kimiWeekField?.stringValue = "\(Int(week.rounded()))%"
             self.snapKimi5h = fiveH
             self.snapKimiWeek = week
+            self.snapKimi5hResetAt = k.fiveHourResetAt
+            self.snapKimiWeekResetAt = k.weeklyResetAt
         } else {
             for (bar, field) in [(self.kimi5hBar, self.kimi5hField),
                                  (self.kimiWeekBar, self.kimiWeekField)] {
@@ -157,6 +162,8 @@ public class Portal: PortalWrapper, CombinedQuotaPortal {
             }
             self.snapKimi5h = nil
             self.snapKimiWeek = nil
+            self.snapKimi5hResetAt = nil
+            self.snapKimiWeekResetAt = nil
         }
 
         // --- Codex ---
@@ -170,6 +177,7 @@ public class Portal: PortalWrapper, CombinedQuotaPortal {
             self.codexBar?.color = Self.quotaColor(rem)
             self.codexField?.stringValue = "\(Int(rem.rounded()))%"
             self.snapCodexWeekRem = rem
+            self.snapCodexWeekResetAt = w.resetAt
             self.snapCodexErr = nil
         } else if let c = value.codex, let e = c.error, !e.isEmpty {
             self.codexBar?.value = 0
@@ -177,11 +185,13 @@ public class Portal: PortalWrapper, CombinedQuotaPortal {
             self.codexField?.stringValue = e
             self.snapCodexErr = e
             self.snapCodexWeekRem = nil
+            self.snapCodexWeekResetAt = nil
         } else {
             self.codexBar?.value = 0
             self.codexBar?.color = .lightGray
             self.codexField?.stringValue = "—"
             self.snapCodexWeekRem = nil
+            self.snapCodexWeekResetAt = nil
             self.snapCodexErr = nil
         }
     }
@@ -193,4 +203,7 @@ public class Portal: PortalWrapper, CombinedQuotaPortal {
     public var codexFiveHourRemainingPct: Double? { self.snapCodex5hRem }
     public var codexWeeklyRemainingPct: Double? { self.snapCodexWeekRem }
     public var codexError: String? { self.snapCodexErr }
+    public var kimiFiveHourResetAt: Date? { self.snapKimi5hResetAt }
+    public var kimiWeeklyResetAt: Date? { self.snapKimiWeekResetAt }
+    public var codexWeeklyResetAt: Date? { self.snapCodexWeekResetAt }
 }

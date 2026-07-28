@@ -570,3 +570,10 @@
 "Quota Kimi 5h" = "Kimi 5h";
 "Quota Kimi weekly" = "Kimi weekly";
 "Quota Codex weekly" = "Codex weekly";
+"Quota countdown imminent" = "resets soon";
+"Quota countdown minute" = "%0 min";
+"Quota countdown under minute" = "<1 min";
+"Quota countdown hour" = "%0h";
+"Quota countdown hour minute" = "%0h %1m";
+"Quota countdown day" = "%0d";
+"Quota countdown day hour" = "%0d %1h";

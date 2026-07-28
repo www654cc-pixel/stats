@@ -87,6 +87,11 @@ public protocol CombinedQuotaPortal: AnyObject {
     var codexFiveHourRemainingPct: Double? { get } // reserved for when Codex restores this window
     var codexWeeklyRemainingPct: Double? { get }   // 100 - weekly utilization, or nil
     var codexError: String? { get }
+    // Original reset deadlines. The dashboard formats these against the current
+    // time on every refresh, so countdown text advances without extra API polls.
+    var kimiFiveHourResetAt: Date? { get }
+    var kimiWeeklyResetAt: Date? { get }
+    var codexWeeklyResetAt: Date? { get }
 }
 
 // one timezone entry for the combined overview's single-line clock row
