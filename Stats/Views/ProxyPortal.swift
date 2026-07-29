@@ -237,11 +237,11 @@ internal class ProxyPortal: NSStackView {
         let speed = ProxyTrafficLedger.shared.currentSpeed()
         let usage = ProxyTrafficLedger.shared.usage(node: self.currentNode)
         let text = "↓ \(Units(bytes: speed.down).getReadableSpeed())  ↑ \(Units(bytes: speed.up).getReadableSpeed())"
-        let month = Units(bytes: usage.0 + usage.1).getReadableMemory()
-        let today = Units(bytes: usage.2 + usage.3).getReadableMemory()
         let usageText = localizedString("Proxy month usage")
-            .replacingOccurrences(of: "%0", with: month)
-            .replacingOccurrences(of: "%1", with: today)
+            .replacingOccurrences(of: "%0", with: Units(bytes: usage.0).getReadableMemory())
+            .replacingOccurrences(of: "%1", with: Units(bytes: usage.1).getReadableMemory())
+            .replacingOccurrences(of: "%2", with: Units(bytes: usage.2).getReadableMemory())
+            .replacingOccurrences(of: "%3", with: Units(bytes: usage.3).getReadableMemory())
         DispatchQueue.main.async {
             self.speedField.stringValue = text
             self.usageField.stringValue = usageText
