@@ -578,3 +578,13 @@
 "Quota countdown day" = "%0d";
 "Quota countdown day hour" = "%0d %1h";
 "Proxy month usage" = "month ↑%0 ↓%1 · today ↑%2 ↓%3";
+"Honcho memory" = "Honcho memory";
+"Online" = "Online";
+"Offline" = "Offline";
+"Queue" = "Queue";
+"Timeouts" = "Timeouts";
+"Sessions" = "Sessions";
+"Conclusions" = "Conclusions";
+"Running" = "Running";
+"Stopped" = "Stopped";
+"Honcho memory status" = "Honcho memory status";

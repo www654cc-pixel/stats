@@ -575,3 +575,13 @@
 "Quota countdown day" = "%0天";
 "Quota countdown day hour" = "%0天 %1时";
 "Proxy month usage" = "本月 ↑%0 ↓%1 · 今日 ↑%2 ↓%3";
+"Honcho memory" = "记忆";
+"Online" = "在线";
+"Offline" = "离线";
+"Queue" = "队列";
+"Timeouts" = "超时";
+"Sessions" = "会话";
+"Conclusions" = "结论";
+"Running" = "运行中";
+"Stopped" = "已停止";
+"Honcho memory status" = "Honcho 记忆系统状态";

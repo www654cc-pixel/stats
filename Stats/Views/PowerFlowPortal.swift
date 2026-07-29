@@ -66,6 +66,12 @@ internal class PowerFlowPortal: NSStackView {
     private var refreshTimer: Timer?
     private var topTicker: Int = 0
     private var topIsRunning: Bool = false
+    // Honcho memory-system status: pill in the header + expandable detail strip
+    private let honchoMonitor = HonchoStatusMonitor()
+    private let honchoPill = HonchoStatusPill()
+    private let honchoDetail = HonchoDetailStrip()
+    private var honchoDetailExpanded = false
+    private var heightConstraint: NSLayoutConstraint?
     // EMA state for battery watts: raw Amperage×Voltage samples are instantaneous
     // and jittery (2-3x PSTR at times); smooth them to the same time scale as the
     // SMC power rails so the reading roughly conserves energy.
@@ -104,11 +110,23 @@ internal class PowerFlowPortal: NSStackView {
         header.addArrangedSubview(boltIcon)
         header.addArrangedSubview(self.titleField)
         header.addArrangedSubview(NSView())
+        header.addArrangedSubview(self.honchoPill)
         header.addArrangedSubview(self.healthChip)
         header.addArrangedSubview(self.statusChip)
         header.addArrangedSubview(self.headerButton(symbol: "chart.bar.fill", tooltip: localizedString("Open Activity Monitor"), action: #selector(self.openActivityMonitor)))
         header.addArrangedSubview(self.headerButton(symbol: "gearshape", tooltip: localizedString("Open module"), action: #selector(self.openCombinedSettings)))
         self.addArrangedSubview(header)
+
+        // Honcho detail strip: hidden until the pill is clicked
+        self.honchoDetail.isHidden = true
+        self.addArrangedSubview(self.honchoDetail)
+
+        self.honchoPill.onClick = { [weak self] in self?.toggleHonchoDetail() }
+        self.honchoMonitor.onUpdate = { [weak self] model in
+            guard let self = self else { return }
+            self.honchoPill.set(model, expanded: self.honchoDetailExpanded)
+            self.honchoDetail.set(model)
+        }
 
         // Hero body: a large total-power readout, battery state, then a live
         // component breakdown. The unequal visual weights make the card read
@@ -154,7 +172,8 @@ internal class PowerFlowPortal: NSStackView {
 
         let height = self.edgeInsets.top + self.edgeInsets.bottom
             + self.headerHeight + self.heroHeight + self.spacing
-        self.heightAnchor.constraint(equalToConstant: height).isActive = true
+        self.heightConstraint = self.heightAnchor.constraint(equalToConstant: height)
+        self.heightConstraint?.isActive = true
     }
 
     required init?(coder: NSCoder) {
@@ -188,6 +207,18 @@ internal class PowerFlowPortal: NSStackView {
         NotificationCenter.default.post(name: .toggleSettings, object: nil, userInfo: ["module": localizedString("System Overview")])
     }
 
+    // MARK: - honcho detail toggle
+
+    private func toggleHonchoDetail() {
+        self.honchoDetailExpanded.toggle()
+        self.honchoDetail.isHidden = !self.honchoDetailExpanded
+        // the card has a fixed height: grow/shrink by the strip + one stack gap
+        let delta: CGFloat = 22 + self.spacing
+        self.heightConstraint?.constant += self.honchoDetailExpanded ? delta : -delta
+        self.honchoPill.set(self.honchoMonitor.model, expanded: self.honchoDetailExpanded)
+        self.onResize?()
+    }
+
     private var widthConstraint: NSLayoutConstraint?
 
     internal func setWidth(_ width: CGFloat) {
@@ -218,11 +249,13 @@ internal class PowerFlowPortal: NSStackView {
         self.refreshTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
             self?.refresh()
         }
+        self.honchoMonitor.start()
     }
 
     internal func stop() {
         self.refreshTimer?.invalidate()
         self.refreshTimer = nil
+        self.honchoMonitor.stop()
     }
 
     // MARK: - data

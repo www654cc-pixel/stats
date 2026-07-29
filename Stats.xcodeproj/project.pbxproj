@@ -29,6 +29,7 @@
 		5C21D80B296C7B81005BA16D /* CombinedView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C21D80A296C7B81005BA16D /* CombinedView.swift */; };
 		5C21D80C296C7B81005BA16D /* ProxyPortal.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C21D80D296C7B81005BA16D /* ProxyPortal.swift */; };
 		5CA1B2012E4A000000000001 /* ProxyTrafficLedger.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5CA1B2022E4A000000000001 /* ProxyTrafficLedger.swift */; };
+		5CA1B2032E4A000000000001 /* HonchoStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5CA1B2042E4A000000000001 /* HonchoStatus.swift */; };
 		5C21D80E296C7B81005BA16D /* LauncherPortal.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C21D80F296C7B81005BA16D /* LauncherPortal.swift */; };
 		5C21D810296C7B81005BA16D /* PowerFlowPortal.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C21D811296C7B81005BA16D /* PowerFlowPortal.swift */; };
 		5C21D812296C7B81005BA16D /* MetricTiles.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C21D813296C7B81005BA16D /* MetricTiles.swift */; };
@@ -586,6 +587,7 @@
 		5C21D80A296C7B81005BA16D /* CombinedView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CombinedView.swift; sourceTree = "<group>"; };
 		5C21D80D296C7B81005BA16D /* ProxyPortal.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProxyPortal.swift; sourceTree = "<group>"; };
 		5CA1B2022E4A000000000001 /* ProxyTrafficLedger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProxyTrafficLedger.swift; sourceTree = "<group>"; };
+		5CA1B2042E4A000000000001 /* HonchoStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HonchoStatus.swift; sourceTree = "<group>"; };
 		5C21D80F296C7B81005BA16D /* LauncherPortal.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LauncherPortal.swift; sourceTree = "<group>"; };
 		5C21D811296C7B81005BA16D /* PowerFlowPortal.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PowerFlowPortal.swift; sourceTree = "<group>"; };
 		5C21D813296C7B81005BA16D /* MetricTiles.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetricTiles.swift; sourceTree = "<group>"; };
@@ -1279,6 +1281,7 @@
 				5C21D80A296C7B81005BA16D /* CombinedView.swift */,
 				5C21D80D296C7B81005BA16D /* ProxyPortal.swift */,
 				5CA1B2022E4A000000000001 /* ProxyTrafficLedger.swift */,
+				5CA1B2042E4A000000000001 /* HonchoStatus.swift */,
 				5C21D811296C7B81005BA16D /* PowerFlowPortal.swift */,
 				5C21D813296C7B81005BA16D /* MetricTiles.swift */,
 				5C21D80F296C7B81005BA16D /* LauncherPortal.swift */,
@@ -2340,6 +2343,7 @@
 				5C21D80B296C7B81005BA16D /* CombinedView.swift in Sources */,
 				5C21D80C296C7B81005BA16D /* ProxyPortal.swift in Sources */,
 				5CA1B2012E4A000000000001 /* ProxyTrafficLedger.swift in Sources */,
+				5CA1B2032E4A000000000001 /* HonchoStatus.swift in Sources */,
 				5C21D810296C7B81005BA16D /* PowerFlowPortal.swift in Sources */,
 				5C21D812296C7B81005BA16D /* MetricTiles.swift in Sources */,
 				5C21D80E296C7B81005BA16D /* LauncherPortal.swift in Sources */,
