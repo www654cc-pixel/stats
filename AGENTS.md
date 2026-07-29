@@ -72,7 +72,16 @@ osascript -e 'quit app "Stats"'
 ```
 
 The same mechanism can be disabled with `--disable-launch-at-login`. Verify the
-registration with `sfltool dumpbtm` and search for `eu.exelban.Stats`.
+registration with `sfltool dumpbtm` and search for `eu.exelban.Stats` — the
+`2.eu.exelban.Stats` item must show `Disposition: [enabled, ...]`.
+
+**Pitfall — duplicate menu bar icons**: two Stats *processes* means two login
+mechanisms are both firing. SMAppService is the only supported one. A hand-made
+legacy LaunchAgent (`~/Library/LaunchAgents/eu.exelban.Stats.launcher.plist`,
+created 2026-07-22 during debugging) caused duplicates after every login/wake;
+it was disabled 2026-07-29 (renamed to `.disabled`). If duplicates reappear,
+check `launchctl list | grep -i stats` for anything besides the
+`application.eu.exelban.Stats.*` entry.
 
 Build-only check: same command with `-configuration Debug CODE_SIGNING_ALLOWED=NO
 CODE_SIGNING_REQUIRED=NO`. The built-in updater is disabled on this machine
