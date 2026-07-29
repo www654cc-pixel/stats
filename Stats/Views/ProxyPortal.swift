@@ -27,8 +27,10 @@ internal class ProxyPortal: NSStackView {
     private var speedField = NSTextField(labelWithString: "")
     private var currentField = NSTextField(labelWithString: "")
     private var currentDelayField = NSTextField(labelWithString: "")
+    private var usageField = NSTextField(labelWithString: "")
     private let chevron = NSImageView()
     private let header = NSStackView()
+    private let usageRow = NSStackView()
     private weak var openNodesMenu: NSMenu?
 
     private var nodeNames: [String] = []
@@ -39,8 +41,6 @@ internal class ProxyPortal: NSStackView {
 
     private var speedTimer: Timer?
     private var testTimer: Timer?
-    private var lastDownload: Int64?
-    private var lastUpload: Int64?
     // throttles full-list delay tests so we don't fire N concurrent HTTP
     // requests every 30 s — only the current node is tested on each refresh;
     // all nodes are tested lazily when the list is first expanded.
@@ -110,9 +110,23 @@ internal class ProxyPortal: NSStackView {
         self.header.addGestureRecognizer(click)
         self.addArrangedSubview(self.header)
 
-        let compactHeight = self.headerHeight + self.edgeInsets.top + self.edgeInsets.bottom
+        // second row: per-node month/today traffic booked by ProxyTrafficLedger
+        self.usageField.font = NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .regular)
+        self.usageField.textColor = Design.secondaryTextColor
+        self.usageField.lineBreakMode = .byTruncatingTail
+        self.usageRow.orientation = .horizontal
+        self.usageRow.distribution = .fill
+        self.usageRow.alignment = .centerY
+        self.usageRow.heightAnchor.constraint(equalToConstant: 14).isActive = true
+        self.usageRow.addArrangedSubview(self.usageField)
+        self.addArrangedSubview(self.usageRow)
+
+        let compactHeight = self.headerHeight + 4 + 14 + self.edgeInsets.top + self.edgeInsets.bottom
         self.heightConstraint = self.heightAnchor.constraint(equalToConstant: compactHeight)
         self.heightConstraint?.isActive = true
+
+        // the ledger polls mihomo whether or not the panel is open
+        ProxyTrafficLedger.shared.start()
     }
 
     required init?(coder: NSCoder) {
@@ -184,6 +198,7 @@ internal class ProxyPortal: NSStackView {
     }
 
     internal func start() {
+        ProxyTrafficLedger.shared.start()
         self.refreshState()
         self.refreshSpeed()
         self.speedTimer?.invalidate()
@@ -201,8 +216,6 @@ internal class ProxyPortal: NSStackView {
         self.speedTimer = nil
         self.testTimer?.invalidate()
         self.testTimer = nil
-        self.lastDownload = nil
-        self.lastUpload = nil
     }
 
     // MARK: - networking
@@ -220,25 +233,18 @@ internal class ProxyPortal: NSStackView {
     }
 
     private func refreshSpeed() {
-        self.get("/connections") { [weak self] json in
-            guard let self = self else { return }
-            guard let json = json,
-                  let down = (json["downloadTotal"] as? NSNumber)?.int64Value,
-                  let up = (json["uploadTotal"] as? NSNumber)?.int64Value else { return }
-
-            var text = ""
-            if let ld = self.lastDownload, let lu = self.lastUpload {
-                let d = max(down - ld, 0)
-                let u = max(up - lu, 0)
-                text = "↓ \(Units(bytes: d).getReadableSpeed())  ↑ \(Units(bytes: u).getReadableSpeed())"
-            }
-            self.lastDownload = down
-            self.lastUpload = up
-
-            DispatchQueue.main.async {
-                self.markReachable(true)
-                if !text.isEmpty { self.speedField.stringValue = text }
-            }
+        // the ledger owns the /connections polling; here we only render
+        let speed = ProxyTrafficLedger.shared.currentSpeed()
+        let usage = ProxyTrafficLedger.shared.usage(node: self.currentNode)
+        let text = "↓ \(Units(bytes: speed.down).getReadableSpeed())  ↑ \(Units(bytes: speed.up).getReadableSpeed())"
+        let month = Units(bytes: usage.0 + usage.1).getReadableMemory()
+        let today = Units(bytes: usage.2 + usage.3).getReadableMemory()
+        let usageText = localizedString("Proxy month usage")
+            .replacingOccurrences(of: "%0", with: month)
+            .replacingOccurrences(of: "%1", with: today)
+        DispatchQueue.main.async {
+            self.speedField.stringValue = text
+            self.usageField.stringValue = usageText
         }
     }
 

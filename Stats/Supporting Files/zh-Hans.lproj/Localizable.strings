@@ -574,3 +574,4 @@
 "Quota countdown hour minute" = "%0时 %1分";
 "Quota countdown day" = "%0天";
 "Quota countdown day hour" = "%0天 %1时";
+"Proxy month usage" = "本月 %0 · 今日 %1";
