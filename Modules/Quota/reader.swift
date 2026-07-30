@@ -98,7 +98,10 @@ public struct ClaudeQuota: Codable {
 public struct QuotaData: Codable {
     var kimi: KimiQuota?
     var codex: CodexQuota?
-    var updatedAt: Date?
+    var updatedAt: Date?        // last read ATTEMPT
+    var kimiUpdatedAt: Date?    // last time `kimi` actually came from the API
+    var codexUpdatedAt: Date?   // last time `codex.windows` actually came from the API
+    var kimiError: String?
     var error: String?
 }
 
@@ -116,14 +119,55 @@ public class QuotaReader: Reader<QuotaData> {
         return URLSession(configuration: cfg)
     }()
 
+    /// Guards against overlapping reads: the repeating timer and an on-demand
+    /// refresh (panel opened) can otherwise fire two rounds of requests at once.
+    private let flightQueue = DispatchQueue(label: "eu.exelban.quotaInFlight")
+    private var _inFlight: Bool = false
+
+    /// Access token obtained by refreshing during this app session. Codex CLI owns
+    /// ~/.codex/auth.json, so we never write back — we just reuse it in memory.
+    private var _cachedCodexAccess: String?
+    private var cachedCodexAccess: String? {
+        get { self.flightQueue.sync { self._cachedCodexAccess } }
+        set { self.flightQueue.sync { self._cachedCodexAccess = newValue } }
+    }
+
     public override func setup() {
         // Keep the reader's fallback aligned with the value shown in Settings.
         // Reader defaults to one second, which would otherwise poll both remote
         // quota APIs continuously until the user explicitly chose an interval.
-        self.defaultInterval = 600
+        // The overview panel refreshes on open, so background polling only needs
+        // to keep the (optional) menu bar text widget from going stale.
+        self.defaultInterval = 1800
+    }
+
+    /// "刷新间隔 = 关闭": the overview panel's open-triggered fetch is the only
+    /// trigger, so nothing polls in the background.
+    private var backgroundPollingDisabled: Bool {
+        Store.shared.int(key: "\(self.title)_updateInterval", defaultValue: 1800) == 0
+    }
+
+    public override func start() {
+        guard self.backgroundPollingDisabled else {
+            super.start()
+            return
+        }
+        // Still read once at launch: the menu bar text widget and the restored
+        // snapshot would otherwise stay empty until the panel is first opened.
+        DispatchQueue.global(qos: .background).async { [weak self] in self?.read() }
     }
 
     public override func read() {
+        let start: Bool = self.flightQueue.sync {
+            if self._inFlight { return false }
+            self._inFlight = true
+            return true
+        }
+        guard start else {
+            debug("Quota read already in flight, skipping", log: self.log)
+            return
+        }
+
         let group = DispatchGroup()
         var kimi: KimiQuota?
         var kimiErr: String?
@@ -144,14 +188,52 @@ public class QuotaReader: Reader<QuotaData> {
 
         group.notify(queue: .main) { [weak self] in
             guard let self else { return }
+            self.flightQueue.sync { self._inFlight = false }
+
+            let previous = self.value
             var data = QuotaData()
-            data.kimi = kimi
-            data.codex = codex
             data.updatedAt = Date()
-            if kimiErr != nil, codex == nil {
-                data.error = kimiErr
+
+            // Kimi: a failed poll must not erase a good reading. Keep the last
+            // one and record the error, so the UI can dim it instead of showing
+            // "—" for up to a full poll interval after one network hiccup.
+            if let kimi {
+                data.kimi = kimi
+                data.kimiUpdatedAt = data.updatedAt
+                data.kimiError = nil
+            } else if kimiErr != nil, let old = previous?.kimi {
+                data.kimi = old
+                data.kimiUpdatedAt = previous?.kimiUpdatedAt
+                data.kimiError = kimiErr
+            } else {
+                // never configured, or no previous value to fall back to
+                data.kimiError = kimiErr
+            }
+
+            // Codex: same rule, keyed on whether this round produced any window.
+            if let codex, !codex.windows.isEmpty {
+                data.codex = codex
+                data.codexUpdatedAt = data.updatedAt
+            } else if let old = previous?.codex, !old.windows.isEmpty {
+                var merged = old
+                merged.error = codex?.error
+                data.codex = merged
+                data.codexUpdatedAt = previous?.codexUpdatedAt
+            } else {
+                data.codex = codex
+            }
+
+            if data.kimi == nil, data.codex?.windows.isEmpty ?? true {
+                data.error = kimiErr ?? data.codex?.error
             }
             self.callback(data)
+
+            // Reader's own DB write is throttled to interval*10 (5h at a 30-minute
+            // interval), which would leave a cold launch showing "—". Persist every
+            // successful round so a restart starts from the last known numbers.
+            if kimi != nil || !(codex?.windows.isEmpty ?? true) {
+                self.save(data)
+            }
         }
     }
 
@@ -198,7 +280,10 @@ public class QuotaReader: Reader<QuotaData> {
             if let usage = dict["usage"] as? [String: Any] {
                 q.weeklyLimit = Self.toDouble(usage["limit"])
                 q.weeklyUsed = Self.toDouble(usage["used"])
-                q.weeklyRemaining = Self.toDouble(usage["remaining"])
+                // Kimi omits "remaining" entirely once the quota is exhausted
+                // (verified 2026-07-30: {limit:"100", used:"100"} with no
+                // remaining), so derive it rather than rendering "—" for 0%.
+                q.weeklyRemaining = Self.remaining(usage)
                 q.weeklyResetAt = QuotaCountdownFormatter.date(fromISO8601: usage["resetTime"] as? String)
                 q.weeklyReset = q.weeklyResetAt.map(Self.shortDate) ?? (usage["resetTime"] as? String)
             }
@@ -212,7 +297,7 @@ public class QuotaReader: Reader<QuotaData> {
                     let secs = (tu == "TIME_UNIT_MINUTE") ? dur * 60 : dur
                     let detail = l["detail"] as? [String: Any]
                     let lim = Self.toDouble(detail?["limit"])
-                    let rem = Self.toDouble(detail?["remaining"])
+                    let rem = detail.flatMap { Self.remaining($0) }
                     let resetAt = QuotaCountdownFormatter.date(fromISO8601: detail?["resetTime"] as? String)
                     let reset = resetAt.map(Self.shortDate) ?? (detail?["resetTime"] as? String)
                     if secs == 18000 {
@@ -257,7 +342,12 @@ public class QuotaReader: Reader<QuotaData> {
         }
         result.accountId = token.account
 
-        self.performCodexRequest(access: token.access, account: token.account) { [weak self] http, data in
+        // Prefer a token we refreshed earlier in this app session: the refreshed
+        // access token is never written back to ~/.codex/auth.json, so without
+        // this cache every single poll would pay for a refresh round-trip.
+        let access = self.cachedCodexAccess ?? token.access
+
+        self.performCodexRequest(access: access, account: token.account) { [weak self] http, data, err in
             guard let self else { completion(result); return }
 
             // Refresh once on 401, then retry.
@@ -268,23 +358,24 @@ public class QuotaReader: Reader<QuotaData> {
                         completion(result)
                         return
                     }
-                    self.performCodexRequest(access: newAccess, account: token.account) { http2, data2 in
-                        self.parseCodex(data: data2, http: http2, into: &result)
+                    self.cachedCodexAccess = newAccess
+                    self.performCodexRequest(access: newAccess, account: token.account) { http2, data2, err2 in
+                        self.parseCodex(data: data2, http: http2, error: err2, into: &result)
                         completion(result)
                     }
                 }
                 return
             }
 
-            self.parseCodex(data: data, http: http, into: &result)
+            self.parseCodex(data: data, http: http, error: err, into: &result)
             completion(result)
         }
     }
 
     private func performCodexRequest(access: String, account: String,
-                                     completion: @escaping (HTTPURLResponse?, Data?) -> Void) {
+                                     completion: @escaping (HTTPURLResponse?, Data?, Error?) -> Void) {
         guard let url = URL(string: "https://chatgpt.com/backend-api/wham/usage") else {
-            completion(nil, nil); return
+            completion(nil, nil, nil); return
         }
         var req = URLRequest(url: url)
         req.httpMethod = "GET"
@@ -294,27 +385,45 @@ public class QuotaReader: Reader<QuotaData> {
         if !account.isEmpty {
             req.setValue(account, forHTTPHeaderField: "ChatGPT-Account-Id")
         }
-        self.session.dataTask(with: req) { data, resp, _ in
-            completion(resp as? HTTPURLResponse, data)
+        self.session.dataTask(with: req) { data, resp, err in
+            completion(resp as? HTTPURLResponse, data, err)
         }.resume()
     }
 
-    private func parseCodex(data: Data?, http: HTTPURLResponse?, into result: inout CodexQuota) {
-        guard let data, let http = http, http.statusCode == 200,
+    private func parseCodex(data: Data?, http: HTTPURLResponse?, error: Error?, into result: inout CodexQuota) {
+        // Distinguish "the network never answered" from "the answer surprised us":
+        // both used to be reported as 解析失败 (HTTP -1), which hid every outage.
+        if let error {
+            result.error = "Codex 网络错误: \(error.localizedDescription)"
+            return
+        }
+        guard let http else {
+            result.error = "Codex 无响应"
+            return
+        }
+        if http.statusCode == 401 || http.statusCode == 403 {
+            result.error = "Codex token 已过期，请重新登录 Codex"
+            return
+        }
+        guard http.statusCode == 200 else {
+            result.error = "Codex HTTP \(http.statusCode)"
+            return
+        }
+        guard let data,
               let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let rl = dict["rate_limit"] as? [String: Any] else {
-            if let http, (http.statusCode == 401 || http.statusCode == 403) {
-                result.error = "Codex token 已过期，请重新登录 Codex"
-            } else {
-                result.error = "Codex 响应解析失败 (HTTP \(http?.statusCode ?? -1))"
-            }
+            result.error = "Codex 响应解析失败（无 rate_limit 字段）"
             return
         }
 
+        // Windows are matched by duration downstream, so an unparseable window is
+        // silently dropped. Be permissive about the numeric encoding, and report
+        // which window keys were present but unusable — otherwise a server-side
+        // schema change is indistinguishable from OpenAI retiring a window.
         func parseWindow(_ w: [String: Any]?) -> CodexWindow? {
-            guard let w, let used = w["used_percent"] as? Double else { return nil }
-            let secs = w["limit_window_seconds"] as? Int64 ?? 0
-            let resetAt = (w["reset_at"] as? Int64).map { Date(timeIntervalSince1970: TimeInterval($0)) }
+            guard let w, let used = Self.toDouble(w["used_percent"]) else { return nil }
+            let secs = Self.toInt64(w["limit_window_seconds"]) ?? 0
+            let resetAt = Self.toInt64(w["reset_at"]).map { Date(timeIntervalSince1970: TimeInterval($0)) }
             return CodexWindow(
                 name: Self.windowName(secs),
                 durationSeconds: secs,
@@ -324,8 +433,22 @@ public class QuotaReader: Reader<QuotaData> {
             )
         }
 
-        if let pw = parseWindow(rl["primary_window"] as? [String: Any]) { result.windows.append(pw) }
-        if let sw = parseWindow(rl["secondary_window"] as? [String: Any]) { result.windows.append(sw) }
+        var skipped: [String] = []
+        for key in ["primary_window", "secondary_window"] {
+            let raw = rl[key] as? [String: Any]
+            if let w = parseWindow(raw) {
+                result.windows.append(w)
+            } else if raw != nil {
+                skipped.append(key)
+            }
+        }
+        if result.windows.isEmpty {
+            result.error = skipped.isEmpty
+                ? "Codex 未返回任何额度窗口"
+                : "Codex 窗口无法解析: \(skipped.joined(separator: ", "))"
+        } else if !skipped.isEmpty {
+            debug("Codex windows present but unparseable: \(skipped.joined(separator: ", "))", log: self.log)
+        }
     }
 
     // MARK: Codex token helpers
@@ -483,8 +606,25 @@ public class QuotaReader: Reader<QuotaData> {
     // MARK: formatting helpers
 
     private static func toDouble(_ v: Any?) -> Double? {
+        if let n = v as? NSNumber { return n.doubleValue }
         if let d = v as? Double { return d }
         if let s = v as? String, let d = Double(s) { return d }
+        return nil
+    }
+
+    /// Kimi's `remaining` disappears from the payload when it hits zero, so fall
+    /// back to limit - used. Returns nil only when neither form is available.
+    private static func remaining(_ node: [String: Any]) -> Double? {
+        if let r = Self.toDouble(node["remaining"]) { return r }
+        guard let limit = Self.toDouble(node["limit"]),
+              let used = Self.toDouble(node["used"]) else { return nil }
+        return max(0, limit - used)
+    }
+
+    private static func toInt64(_ v: Any?) -> Int64? {
+        if let n = v as? NSNumber { return n.int64Value }
+        if let i = v as? Int64 { return i }
+        if let s = v as? String, let i = Int64(s) { return i }
         return nil
     }
 

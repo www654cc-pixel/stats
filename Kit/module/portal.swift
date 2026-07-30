@@ -81,17 +81,27 @@ public protocol CombinedClockPortal: AnyObject {
 }
 public protocol CombinedQuotaPortal: AnyObject {
     // remaining-% snapshots (0...100) for the combined overview's compact strip.
-    // nil means the source was not configured / not yet read.
+    // nil means the source was not configured / never read successfully. A value
+    // survives a failed refresh — check the *UpdatedAt/*Error pair for staleness.
     var kimiFiveHourPct: Double? { get }
     var kimiWeeklyPct: Double? { get }
-    var codexFiveHourRemainingPct: Double? { get } // reserved for when Codex restores this window
+    var codexFiveHourRemainingPct: Double? { get } // present only while Codex exposes this window
     var codexWeeklyRemainingPct: Double? { get }   // 100 - weekly utilization, or nil
+    var kimiError: String? { get }
     var codexError: String? { get }
+    // When each source last returned usable data, so the dashboard can dim a
+    // stale value instead of blanking it out on a single failed poll.
+    var kimiUpdatedAt: Date? { get }
+    var codexUpdatedAt: Date? { get }
     // Original reset deadlines. The dashboard formats these against the current
     // time on every refresh, so countdown text advances without extra API polls.
     var kimiFiveHourResetAt: Date? { get }
     var kimiWeeklyResetAt: Date? { get }
+    var codexFiveHourResetAt: Date? { get }
     var codexWeeklyResetAt: Date? { get }
+    /// Ask the module for a fresh fetch (throttled + de-duplicated by the module).
+    /// Called when the overview panel opens, so what you see is what was just read.
+    func refreshQuota()
 }
 
 // one timezone entry for the combined overview's single-line clock row

@@ -10,7 +10,7 @@ internal class Settings: NSStackView, Settings_v, NSTextFieldDelegate {
     private let title: String
     private var kimiApiKey: String = ""
     private var enableCodexState: Bool = true
-    private var updateIntervalValue: Int = 600
+    private var updateIntervalValue: Int = 1800
 
     public var callback: (() -> Void) = {}
     public var callbackWhenUpdateNumberOfProcesses: (() -> Void) = {}
@@ -22,7 +22,7 @@ internal class Settings: NSStackView, Settings_v, NSTextFieldDelegate {
 
         self.kimiApiKey = Store.shared.string(key: "\(self.title)_kimiApiKey", defaultValue: "")
         self.enableCodexState = Store.shared.bool(key: "\(self.title)_enableCodex", defaultValue: true)
-        self.updateIntervalValue = Store.shared.int(key: "\(self.title)_updateInterval", defaultValue: 600)
+        self.updateIntervalValue = Store.shared.int(key: "\(self.title)_updateInterval", defaultValue: 1800)
 
         super.init(frame: NSRect.zero)
 
@@ -53,6 +53,7 @@ internal class Settings: NSStackView, Settings_v, NSTextFieldDelegate {
             PreferencesRow("刷新间隔", component: selectView(
                 action: #selector(self.changeUpdateInterval),
                 items: [
+                    KeyValue_t(key: "0", value: "关闭（仅打开面板时刷新）"),
                     KeyValue_t(key: "300", value: "5 分钟"),
                     KeyValue_t(key: "600", value: "10 分钟"),
                     KeyValue_t(key: "1800", value: "30 分钟"),
@@ -111,7 +112,9 @@ internal class Settings: NSStackView, Settings_v, NSTextFieldDelegate {
     }
 
     @objc private func changeUpdateInterval(_ sender: NSMenuItem) {
-        guard let value = Int(sender.title) else { return }
+        // selectView() puts the key in representedObject and the LOCALIZED text in
+        // the title, so parsing the title ("10 分钟") silently discarded every pick.
+        guard let key = sender.representedObject as? String, let value = Int(key) else { return }
         self.updateIntervalValue = value
         Store.shared.set(key: "\(self.title)_updateInterval", value: value)
         self.setInterval(value)

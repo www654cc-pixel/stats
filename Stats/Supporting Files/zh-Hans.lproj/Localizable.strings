@@ -564,8 +564,11 @@
 "Mother's Day" = "母亲节";
 "Father's Day" = "父亲节";
 "Quota remaining" = "剩余 %0%";
+"Quota stale" = "数据时间 %0 — 最近一次刷新失败：%1";
+"Quota updated at" = "更新于 %0";
 "Quota Kimi 5h" = "Kimi 5h";
 "Quota Kimi weekly" = "Kimi 周";
+"Quota Codex 5h" = "Codex 5h";
 "Quota Codex weekly" = "Codex 周";
 "Quota countdown imminent" = "即将重置";
 "Quota countdown minute" = "%0分";

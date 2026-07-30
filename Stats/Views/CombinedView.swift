@@ -415,6 +415,7 @@ private class Popup: NSStackView, Popup_p {
     fileprivate func appear() {
         self.tiles.refresh()
         self.calendar.refresh()
+        self.infoStrip.requestQuotaRefresh()
         self.infoStrip.refresh()
         self.refreshTimer?.invalidate()
         self.refreshTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
@@ -572,7 +573,8 @@ private class Popup: NSStackView, Popup_p {
 // MARK: - Info strip (Quota + Clock merged)
 
 // One horizontal card: the left ~46% shows the Quota mini-cells (Kimi 5h /
-// Kimi 周 / Codex 周), the right side shows the world clock row. Merges the
+// Kimi 周 / Codex 5h / Codex 周 — the Codex rows appear only while the API
+// reports that window), the right side shows the world clock row. Merges the
 // former two separate cards into a single 46px line, reclaiming ~50px.
 private class InfoStrip: NSStackView {
     static let compactHeight: CGFloat = 62
@@ -635,9 +637,13 @@ private class InfoStrip: NSStackView {
         q.alignment = .centerY
         q.distribution = .fillEqually
         q.spacing = 10
+        // Codex 5h is created up front but stays hidden until the API actually
+        // reports that window — OpenAI has retired and restored each of its two
+        // windows before, and the row set follows whatever comes back.
         for title in [
             localizedString("Quota Kimi 5h"),
             localizedString("Quota Kimi weekly"),
+            localizedString("Quota Codex 5h"),
             localizedString("Quota Codex weekly")
         ] {
             let cell = QuotaCell(title: title)
@@ -719,6 +725,13 @@ private class InfoStrip: NSStackView {
         self.quotaSource = nil
     }
 
+    /// Ask the Quota module for a fresh fetch. Called when the panel opens, not
+    /// from the one-second timer: the module throttles it to one fetch per
+    /// minute, so what the panel shows was read when it was opened.
+    func requestQuotaRefresh() {
+        self.quotaSource?.refreshQuota()
+    }
+
     func refresh() {
         // quota (left)
         if let q = self.quotaSource {
@@ -750,27 +763,62 @@ private class InfoStrip: NSStackView {
     }
 
     private static func apply(quota q: CombinedQuotaPortal, to cells: [QuotaCell]) {
-        guard cells.count == 3 else { return }
-        if let p = q.kimiFiveHourPct {
-            cells[0].set(remainingPct: p, color: InfoStrip.quotaColor(p))
-        } else {
-            cells[0].set(remainingPct: nil, color: .lightGray)
+        guard cells.count == 4 else { return }
+
+        // A failed poll no longer wipes the numbers: the reader hands back the
+        // previous reading plus an error, and a kept value is drawn dimmed with
+        // its age in the tooltip rather than as "—".
+        let kimiNote = InfoStrip.staleNote(error: q.kimiError, updatedAt: q.kimiUpdatedAt)
+        let codexNote = InfoStrip.staleNote(error: q.codexError, updatedAt: q.codexUpdatedAt)
+
+        for (i, pct) in [q.kimiFiveHourPct, q.kimiWeeklyPct].enumerated() {
+            if let p = pct {
+                cells[i].set(remainingPct: p, color: InfoStrip.quotaColor(p),
+                             stale: kimiNote != nil, note: kimiNote)
+            } else if let e = q.kimiError, !e.isEmpty {
+                cells[i].setError(e)
+            } else {
+                cells[i].set(remainingPct: nil, color: .lightGray)
+            }
         }
-        if let p = q.kimiWeeklyPct {
-            cells[1].set(remainingPct: p, color: InfoStrip.quotaColor(p))
-        } else {
-            cells[1].set(remainingPct: nil, color: .lightGray)
+
+        // Codex: show each window the API returned. When neither is available the
+        // weekly cell stays visible to carry the error, so the card never
+        // collapses to an unexplained empty space.
+        let codex: [Double?] = [q.codexFiveHourRemainingPct, q.codexWeeklyRemainingPct]
+        for (offset, pct) in codex.enumerated() {
+            let cell = cells[2 + offset]
+            let isWeekly = offset == 1
+            if let p = pct {
+                cell.isHidden = false
+                cell.set(remainingPct: p, color: InfoStrip.quotaColor(p),
+                         stale: codexNote != nil, note: codexNote)
+            } else if isWeekly && q.codexFiveHourRemainingPct == nil {
+                cell.isHidden = false
+                if let e = q.codexError, !e.isEmpty {
+                    cell.setError(e)
+                } else {
+                    cell.set(remainingPct: nil, color: .lightGray)
+                }
+            } else {
+                cell.isHidden = true
+            }
         }
-        if let p = q.codexWeeklyRemainingPct {
-            cells[2].set(remainingPct: p, color: InfoStrip.quotaColor(p))
-        } else if let e = q.codexError, !e.isEmpty {
-            cells[2].setError(e)
-        } else {
-            cells[2].set(remainingPct: nil, color: .lightGray)
-        }
+
         cells[0].set(countdownUntil: q.kimiFiveHourResetAt)
         cells[1].set(countdownUntil: q.kimiWeeklyResetAt)
-        cells[2].set(countdownUntil: q.codexWeeklyResetAt)
+        cells[2].set(countdownUntil: q.codexFiveHourResetAt)
+        cells[3].set(countdownUntil: q.codexWeeklyResetAt)
+    }
+
+    /// Tooltip text for a value that survived a failed refresh, or nil when the
+    /// value is current.
+    private static func staleNote(error: String?, updatedAt: Date?) -> String? {
+        guard let error, !error.isEmpty else { return nil }
+        let fmt = DateFormatter()
+        fmt.dateFormat = "MM-dd HH:mm"
+        let when = updatedAt.map { fmt.string(from: $0) } ?? "—"
+        return localizedString("Quota stale", when, error)
     }
 
     private func rebuildClock(_ readings: [ClockReading]) {
@@ -938,12 +986,15 @@ private class QuotaCell: NSStackView {
         }
     }
 
-    func set(remainingPct: Double?, color: NSColor) {
+    func set(remainingPct: Double?, color: NSColor, stale: Bool = false, note: String? = nil) {
         if let p = remainingPct {
-            self.bar.set(fraction: p / 100, color: color)
+            // A stale value keeps its position and traffic-light hue but is faded,
+            // so "the refresh failed" reads differently from "the quota is fine".
+            let shade = stale ? color.withAlphaComponent(0.4) : color
+            self.bar.set(fraction: p / 100, color: shade)
             self.valueField.stringValue = "\(Int(p.rounded()))%"
-            self.valueField.textColor = color
-            self.toolTip = localizedString("Quota remaining", "\(Int(p.rounded()))")
+            self.valueField.textColor = shade
+            self.toolTip = note ?? localizedString("Quota remaining", "\(Int(p.rounded()))")
         } else {
             self.bar.set(fraction: 0, color: .lightGray)
             self.valueField.stringValue = "—"

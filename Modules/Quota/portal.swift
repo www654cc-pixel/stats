@@ -80,10 +80,17 @@ public class Portal: PortalWrapper, CombinedQuotaPortal {
     private var snapKimiWeek: Double?
     private var snapCodex5hRem: Double?
     private var snapCodexWeekRem: Double?
+    private var snapKimiErr: String?
     private var snapCodexErr: String?
+    private var snapKimiUpdatedAt: Date?
+    private var snapCodexUpdatedAt: Date?
     private var snapKimi5hResetAt: Date?
     private var snapKimiWeekResetAt: Date?
+    private var snapCodex5hResetAt: Date?
     private var snapCodexWeekResetAt: Date?
+
+    /// Set by the module so the dashboard can ask for an on-demand fetch.
+    internal var refreshHandler: (() -> Void)?
 
     public override func load() {
         let rows = NSStackView()
@@ -139,6 +146,10 @@ public class Portal: PortalWrapper, CombinedQuotaPortal {
     internal func loadCallback(_ value: QuotaData?) {
         guard let value else { return }
 
+        self.snapKimiErr = value.kimiError
+        self.snapKimiUpdatedAt = value.kimiUpdatedAt
+        self.snapCodexUpdatedAt = value.codexUpdatedAt
+
         // --- Kimi (5h + weekly) ---
         if let k = value.kimi {
             let fiveH = k.fiveHourRemainingPct.map { max(0, $0) } ?? 0
@@ -167,10 +178,12 @@ public class Portal: PortalWrapper, CombinedQuotaPortal {
         }
 
         // --- Codex ---
-        // The API historically exposed both 5-hour and weekly windows. Select
-        // by duration so restoring the 5-hour window cannot replace the weekly
-        // value in the combined dashboard merely by changing response order.
+        // The API exposes the 5-hour and weekly windows independently, and either
+        // one can disappear server-side. Select by duration so a window coming
+        // back cannot land in the other window's row merely by response order;
+        // the dashboard hides whichever row has no data.
         self.snapCodex5hRem = value.codex?.fiveHourWindow.map { max(0, 100 - $0.utilization) }
+        self.snapCodex5hResetAt = value.codex?.fiveHourWindow?.resetAt
         if let c = value.codex, let w = c.weeklyWindow {
             let rem = max(0, 100 - w.utilization)
             self.codexBar?.value = rem / 100
@@ -202,8 +215,16 @@ public class Portal: PortalWrapper, CombinedQuotaPortal {
     public var kimiWeeklyPct: Double? { self.snapKimiWeek }
     public var codexFiveHourRemainingPct: Double? { self.snapCodex5hRem }
     public var codexWeeklyRemainingPct: Double? { self.snapCodexWeekRem }
+    public var kimiError: String? { self.snapKimiErr }
     public var codexError: String? { self.snapCodexErr }
+    public var kimiUpdatedAt: Date? { self.snapKimiUpdatedAt }
+    public var codexUpdatedAt: Date? { self.snapCodexUpdatedAt }
     public var kimiFiveHourResetAt: Date? { self.snapKimi5hResetAt }
     public var kimiWeeklyResetAt: Date? { self.snapKimiWeekResetAt }
+    public var codexFiveHourResetAt: Date? { self.snapCodex5hResetAt }
     public var codexWeeklyResetAt: Date? { self.snapCodexWeekResetAt }
+
+    public func refreshQuota() {
+        self.refreshHandler?()
+    }
 }

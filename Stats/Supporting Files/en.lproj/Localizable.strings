@@ -567,8 +567,11 @@
 "Mother's Day" = "Mother's Day";
 "Father's Day" = "Father's Day";
 "Quota remaining" = "%0% remaining";
+"Quota stale" = "Data from %0 — last refresh failed: %1";
+"Quota updated at" = "Updated %0";
 "Quota Kimi 5h" = "Kimi 5h";
 "Quota Kimi weekly" = "Kimi weekly";
+"Quota Codex 5h" = "Codex 5h";
 "Quota Codex weekly" = "Codex weekly";
 "Quota countdown imminent" = "resets soon";
 "Quota countdown minute" = "%0 min";

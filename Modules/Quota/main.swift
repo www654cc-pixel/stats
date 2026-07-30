@@ -15,6 +15,10 @@ public class Quota: Module {
     private let portalView: Portal
     private var reader: QuotaReader? = nil
 
+    /// Last on-demand refresh, to throttle repeated opening of the overview panel.
+    private var lastOnDemandRefresh: Date? = nil
+    private static let onDemandThrottle: TimeInterval = 60
+
     public init() {
         self.settingsView = Settings(.quota)
         self.popupView = Popup(.quota)
@@ -36,10 +40,36 @@ public class Quota: Module {
             self?.reader?.read()
         }
         self.settingsView.setInterval = { [weak self] value in
-            self?.reader?.setInterval(value)
+            guard let self else { return }
+            // 0 == background polling off. Never hand 0 to setInterval: the
+            // underlying Repeater would schedule a zero-second timer.
+            if value <= 0 {
+                self.reader?.stop()
+            } else {
+                self.reader?.setInterval(value)
+                self.reader?.start()
+            }
+        }
+
+        // The overview panel asks for a fetch when it opens, so the numbers are
+        // read at the moment they are looked at rather than up to a full poll
+        // interval old. Throttled here, and de-duplicated inside the reader.
+        self.portalView.refreshHandler = { [weak self] in
+            self?.refreshOnDemand()
         }
 
         self.setReaders([self.reader])
+    }
+
+    private func refreshOnDemand() {
+        guard self.enabled else { return }
+        if let ts = self.lastOnDemandRefresh, Date().timeIntervalSince(ts) < Self.onDemandThrottle {
+            return
+        }
+        self.lastOnDemandRefresh = Date()
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            self?.reader?.read()
+        }
     }
 
     private func quotaCallback(_ value: QuotaData?) {
