@@ -2,11 +2,13 @@
 //  ProxyTrafficLedger.swift
 //  Stats
 //
-//  Always-on per-node traffic accounting for the mihomo proxy. Polls the
+//  Always-on per-server traffic accounting for the mihomo proxy. Polls the
 //  external-controller /connections endpoint every 2 s (independent of panel
 //  visibility), attributes each connection's cumulative byte counters to its
-//  exit node (top-level chains[0]) and accumulates the deltas into per-day
-//  buckets persisted to Application Support/proxy-traffic.json.
+//  exit node (top-level chains[0]) mapped to its VPS (server host from the
+//  mihomo config), and accumulates the deltas into per-day buckets persisted
+//  to Application Support/proxy-traffic.json. Nodes that share a server
+//  (e.g. HK-Trojan + HK-Hysteria2 on the same VPS) are booked under one key.
 //
 //  Accuracy notes:
 //  - new connections are booked with their full counters (they are cumulative
@@ -57,6 +59,21 @@ internal final class ProxyTrafficLedger {
     private let pollInterval: TimeInterval = 2
     private var started = false
 
+    // node name -> VPS server host, parsed from the mihomo config so traffic
+    // from different protocols on the same VPS is booked under one key
+    private var serverMap: [String: String] = [:]
+    private var configMtime: Date?
+    private var configPath: String {
+        // ~/Documents is TCC-protected for this ad-hoc-signed app; the mihomo
+        // run wrapper snapshots the config it launches with to ~/.config/mihomo
+        // (live-config.yaml), which always matches the running core.
+        let custom = Store.shared.string(key: "CombinedProxy_mihomoConfig", defaultValue: "")
+        if !custom.isEmpty {
+            return (custom as NSString).expandingTildeInPath
+        }
+        return NSHomeDirectory() + "/.config/mihomo/live-config.yaml"
+    }
+
     // last computed per-interval speed (bytes per second), for the UI
     private(set) var speedUp: Int64 = 0
     private(set) var speedDown: Int64 = 0
@@ -101,6 +118,11 @@ internal final class ProxyTrafficLedger {
     private init() {
         self.migrateLegacyFile()
         self.load()
+        // server map first, then the v1->v2 key migration that depends on it
+        self.queue.async {
+            self.loadServerMapLocked()
+            self.migrateToServerKeysLocked()
+        }
         NotificationCenter.default.addObserver(
             forName: NSApplication.willTerminateNotification,
             object: nil, queue: nil
@@ -126,13 +148,16 @@ internal final class ProxyTrafficLedger {
 
     // MARK: - public read API (main-thread safe)
 
-    /// Current node's usage: (monthUp, monthDown, todayUp, todayDown).
+    /// Current node's VPS usage: (monthUp, monthDown, todayUp, todayDown).
+    /// The node is resolved to its server host first, so protocols sharing a
+    /// VPS report the same merged totals.
     internal func usage(node: String) -> (Int64, Int64, Int64, Int64) {
         self.queue.sync {
+            let key = self.serverMap[node] ?? node
             var mUp: Int64 = 0, mDown: Int64 = 0, tUp: Int64 = 0, tDown: Int64 = 0
             let prefix = self.monthPrefix
             for (day, nodes) in self.store.days where day.hasPrefix(prefix) {
-                guard let b = nodes[node] else { continue }
+                guard let b = nodes[key] else { continue }
                 mUp += b.up
                 mDown += b.down
                 if day == self.todayKey {
@@ -151,6 +176,7 @@ internal final class ProxyTrafficLedger {
     // MARK: - polling
 
     private func poll() {
+        self.refreshServerMapIfNeeded()
         guard let url = URL(string: self.base + "/connections") else { return }
         self.session.dataTask(with: url) { [weak self] data, _, err in
             guard let self = self else { return }
@@ -186,7 +212,9 @@ internal final class ProxyTrafficLedger {
             let up = (conn["upload"] as? NSNumber)?.int64Value ?? 0
             let down = (conn["download"] as? NSNumber)?.int64Value ?? 0
             let chains = conn["chains"] as? [String] ?? []
-            let node = chains.first ?? "DIRECT"
+            let rawNode = chains.first ?? "DIRECT"
+            // merge protocols that live on the same VPS under one key
+            let node = self.serverMap[rawNode] ?? rawNode
 
             var deltaUp = up
             var deltaDown = down
@@ -237,6 +265,92 @@ internal final class ProxyTrafficLedger {
         stale.forEach { self.store.connections.removeValue(forKey: $0) }
 
         if !oldDays.isEmpty || !stale.isEmpty { self.dirty = true }
+    }
+
+    // MARK: - server map (node name -> VPS host)
+
+    /// Re-parses the mihomo config when its mtime changed (checked every
+    /// poll; stat is cheap). The map is rebuilt atomically on `queue`.
+    private func refreshServerMapIfNeeded() {
+        let path = self.configPath
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: path),
+              let mtime = attrs[.modificationDate] as? Date else { return }
+        guard self.configMtime != mtime else { return }
+        self.configMtime = mtime
+        self.queue.async { self.loadServerMapLocked() }
+    }
+
+    /// Minimal scanner for the top-level `proxies:` list: pairs each
+    /// `- name: X` with the next `server: Y`. Not a YAML parser — only
+    /// handles the block style mihomo configs use. Runs on `queue`.
+    private func loadServerMapLocked() {
+        guard let text = try? String(contentsOfFile: self.configPath, encoding: .utf8) else { return }
+        var map: [String: String] = [:]
+        var inProxies = false
+        var currentName: String?
+        for line in text.components(separatedBy: .newlines) {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.isEmpty || trimmed.hasPrefix("#") { continue }
+            let indent = line.prefix(while: { $0 == " " }).count
+            // top-level key switch: column-0 keys end the proxies section.
+            // NOTE: YAML list items may sit at column 0 too (`proxies:` then
+            // `- name: ...` unindented) — a leading dash never ends a section.
+            if indent == 0 && !trimmed.hasPrefix("-") {
+                inProxies = trimmed.hasPrefix("proxies:")
+                currentName = nil
+                continue
+            }
+            guard inProxies else { continue }
+            if trimmed.hasPrefix("- ") || trimmed == "-" {
+                currentName = nil
+                let rest = String(trimmed.dropFirst(trimmed == "-" ? 1 : 2))
+                    .trimmingCharacters(in: .whitespaces)
+                if rest.hasPrefix("name:") {
+                    currentName = Self.unquote(String(rest.dropFirst(5)).trimmingCharacters(in: .whitespaces))
+                }
+                continue
+            }
+            if trimmed.hasPrefix("name:"), currentName == nil {
+                currentName = Self.unquote(String(trimmed.dropFirst(5)).trimmingCharacters(in: .whitespaces))
+                continue
+            }
+            if trimmed.hasPrefix("server:"), let name = currentName, !name.isEmpty {
+                let host = Self.unquote(String(trimmed.dropFirst(7)).trimmingCharacters(in: .whitespaces))
+                if !host.isEmpty { map[name] = host }
+            }
+        }
+        if !map.isEmpty { self.serverMap = map }
+    }
+
+    private static func unquote(_ s: String) -> String {
+        if s.count >= 2, s.hasPrefix("\""), s.hasSuffix("\"") { return String(s.dropFirst().dropLast()) }
+        if s.count >= 2, s.hasPrefix("'"), s.hasSuffix("'") { return String(s.dropFirst().dropLast()) }
+        return s
+    }
+
+    /// v1 booked per node name; v3 books per server host (v2 shipped with a
+    /// config path the app could not read, so its merge ran with an empty
+    /// map — re-run it). Merges existing day buckets through the server map
+    /// once (unmapped keys, e.g. DIRECT or removed nodes, are kept as-is).
+    /// Runs on `queue`.
+    private func migrateToServerKeysLocked() {
+        guard self.store.version < 3 else { return }
+        var newDays: [String: [String: NodeBytes]] = [:]
+        for (day, nodes) in self.store.days {
+            var merged: [String: NodeBytes] = [:]
+            for (node, b) in nodes {
+                let key = self.serverMap[node] ?? node
+                var m = merged[key] ?? NodeBytes()
+                m.up += b.up
+                m.down += b.down
+                merged[key] = m
+            }
+            newDays[day] = merged
+        }
+        self.store.days = newDays
+        self.store.version = 3
+        self.dirty = true
+        self.saveLocked()
     }
 
     // MARK: - persistence (queue-confined)
