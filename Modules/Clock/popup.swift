@@ -589,7 +589,8 @@ private class CalendarItemView: NSView {
 
 internal class ClockView: NSStackView {
     public var clock: Clock_t
-
+    private let background: Bool
+    
     open override var intrinsicContentSize: CGSize {
         return CGSize(width: NSView.noIntrinsicMetric, height: 56)
     }
@@ -601,10 +602,11 @@ internal class ClockView: NSStackView {
     private let timeField: NSTextField = TextView()
     private let tzField: NSTextField = TextView()
     private let dateField: NSTextField = TextView()
-
-    init(width: CGFloat, clock: Clock_t) {
+    
+    init(width: CGFloat, clock: Clock_t, background: Bool = true, nameSize: CGFloat = 11, timeSize: CGFloat = 13) {
         self.clock = clock
-
+        self.background = background
+        
         super.init(frame: NSRect(x: 0, y: 0, width: width, height: 50))
 
         self.orientation = .horizontal
@@ -635,14 +637,18 @@ internal class ClockView: NSStackView {
         topRow.distribution = .fill
         topRow.alignment = .centerY
         
-        self.nameField.font = NSFont.systemFont(ofSize: 11, weight: .medium)
+        self.nameField.font = NSFont.systemFont(ofSize: nameSize, weight: .medium)
         self.nameField.textColor = .tertiaryLabelColor
         self.nameField.stringValue = self.clock.name
         self.nameField.lineBreakMode = .byTruncatingTail
         self.nameField.cell?.truncatesLastVisibleLine = true
         self.nameField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         
-        self.tzField.font = NSFont.systemFont(ofSize: 11, weight: .medium)
+        self.timeField.font = NSFont.systemFont(ofSize: timeSize, weight: .regular)
+        self.timeField.stringValue = clock.formatted()
+        self.timeField.cell?.truncatesLastVisibleLine = true
+
+        self.tzField.font = NSFont.systemFont(ofSize: nameSize, weight: .medium)
         self.tzField.textColor = .tertiaryLabelColor
         self.tzField.alignment = .right
         self.tzField.lineBreakMode = .byTruncatingTail
@@ -664,7 +670,7 @@ internal class ClockView: NSStackView {
         self.timeField.cell?.truncatesLastVisibleLine = true
         self.timeField.setContentCompressionResistancePriority(.required, for: .horizontal)
         
-        self.dateField.font = NSFont.systemFont(ofSize: 11, weight: .regular)
+        self.dateField.font = NSFont.systemFont(ofSize: nameSize, weight: .regular)
         self.dateField.textColor = .tertiaryLabelColor
         self.dateField.alignment = .right
         self.dateField.lineBreakMode = .byTruncatingTail
@@ -688,6 +694,7 @@ internal class ClockView: NSStackView {
     }
     
     override func updateLayer() {
+        guard self.background else { return }
         self.layer?.backgroundColor = (isDarkMode ? NSColor(red: 17/255, green: 17/255, blue: 17/255, alpha: 0.25) : NSColor(red: 245/255, green: 245/255, blue: 245/255, alpha: 1)).cgColor
     }
 

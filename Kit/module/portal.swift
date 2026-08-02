@@ -13,6 +13,9 @@ import Cocoa
 
 public protocol Portal_p: NSView {
     var name: String { get }
+    // intrinsic content height, used by the stock combined popup to size itself
+    // (upstream v3.0.10+ PortalWrapper redesign)
+    var height: CGFloat { get }
     // portals that benefit from more horizontal space (e.g. Clock) can opt in.
     // Declared as a protocol requirement (not just an extension default) so
     // overrides dispatch correctly through the `Portal_p` existential type —
@@ -28,6 +31,9 @@ public protocol Portal_p: NSView {
 }
 
 public extension Portal_p {
+    // default for portals that manage their own layout constraints (the fork's
+    // direct-conforming Clock/Sensors portals); PortalWrapper overrides it.
+    var height: CGFloat { Constants.Popup.portalHeight }
     var isWide: Bool { false }
     func setWideWidth(_ width: CGFloat) {}
     var onResize: (() -> Void)? {
@@ -137,44 +143,57 @@ public struct PowerFlowReading {
 
 open class PortalWrapper: NSStackView, Portal_p {
     public var name: String
-    private let header: PortalHeader
+    public var height: CGFloat
     
-    public init(_ type: ModuleType, height: CGFloat = Constants.Popup.portalHeight) {
+    private let header: PortalHeader
+    public let body: NSStackView
+    
+    public init(_ type: ModuleType, height: CGFloat = 100) {
         self.name = type.stringValue
+        self.height = 20 + Constants.Popup.spacing + height
+        
         self.header = PortalHeader(type.stringValue)
+        self.body = {
+            let view = NSStackView()
+            
+            view.orientation = .horizontal
+            view.distribution = .fillEqually
+            
+            view.spacing = Constants.Popup.spacing*2
+            view.edgeInsets = NSEdgeInsets(
+                top: Constants.Popup.spacing,
+                left: Constants.Popup.spacing,
+                bottom: Constants.Popup.spacing,
+                right: Constants.Popup.spacing
+            )
+            
+            return view
+        }()
         
-        super.init(frame: NSRect(x: 0, y: 0, width: Constants.Popup.width, height: height))
-        
-        self.wantsLayer = true
-        self.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
-        self.layer?.cornerRadius = 3
+        super.init(frame: .zero)
         
         self.orientation = .vertical
-        self.distribution = .fillEqually
-        self.spacing = Constants.Popup.spacing*2
-        self.edgeInsets = NSEdgeInsets(
-            top: Constants.Popup.spacing*2,
-            left: Constants.Popup.spacing*2,
-            bottom: Constants.Popup.spacing*2,
-            right: Constants.Popup.spacing*2
-        )
+        self.spacing = Constants.Popup.spacing
+        
         self.addArrangedSubview(self.header)
+        self.addArrangedSubview(self.body)
         
         self.load()
         
-        self.heightAnchor.constraint(equalToConstant: Constants.Popup.portalHeight).isActive = true
+        if self.body.subviews.isEmpty {
+            self.body.addArrangedSubview(NSView())
+        }
+        
+        self.heightAnchor.constraint(equalToConstant: self.height).isActive = true
+        self.body.bottomAnchor.constraint(equalTo: self.bottomAnchor).isActive = true
     }
     
     required public init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
     }
     
-    public override func updateLayer() {
-        self.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
-    }
-    
     open func load() {
-        self.addArrangedSubview(NSView())
+        self.body.addArrangedSubview(NSView())
     }
 }
 
@@ -195,8 +214,8 @@ public class PortalHeader: NSStackView {
         title.textColor = .textColor
         title.backgroundColor = .clear
         title.canDrawSubviewsIntoLayer = true
-        title.alignment = .center
-        title.font = NSFont.systemFont(ofSize: 12, weight: .regular)
+        title.alignment = .left
+        title.font = NSFont.systemFont(ofSize: 12, weight: .medium)
         title.stringValue = localizedString(name)
         
         let settings = NSButton()
@@ -204,7 +223,7 @@ public class PortalHeader: NSStackView {
         settings.bezelStyle = .regularSquare
         settings.translatesAutoresizingMaskIntoConstraints = false
         settings.imageScaling = .scaleProportionallyDown
-        settings.image = iconFromSymbol(name: "gearshape.fill", scale: .xlarge)
+        settings.image = iconFromSymbol(name: "gearshape.fill", scale: .medium)
         settings.contentTintColor = .lightGray
         settings.isBordered = false
         settings.action = #selector(self.openSettings)

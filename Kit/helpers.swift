@@ -544,18 +544,13 @@ public func portalWithColorRow(_ v: NSStackView, color: NSColor, title: String) 
     view.distribution = .fillProportionally
     view.spacing = 1
     
-    let colorView: NSView = NSView()
-    colorView.widthAnchor.constraint(equalToConstant: 5).isActive = true
-    colorView.wantsLayer = true
-    colorView.layer?.backgroundColor = color.cgColor
-    colorView.layer?.cornerRadius = 2
+    let colorView: ColorBlock = ColorBlock(frame: NSRect(x: 3, y: 6, width: 10, height: 10), color: color)
     
     let labelView: LabelField = LabelField(title)
     labelView.font = NSFont.systemFont(ofSize: 11, weight: .regular)
     
     let valueView: ValueField = ValueField()
     valueView.font = NSFont.systemFont(ofSize: 12, weight: .regular)
-    valueView.widthAnchor.constraint(equalToConstant: 40).isActive = true
     
     view.addArrangedSubview(colorView)
     view.addArrangedSubview(labelView)
@@ -1025,6 +1020,76 @@ public func process(path: String, arguments: [String]) -> String? {
     }
     
     let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
+    let output = String(data: outputData, encoding: .utf8)
+    guard let output, !output.isEmpty else { return nil }
+    
+    return output
+}
+
+public func process(path: String, arguments: [String], environment: [String: String]? = nil, timeout: TimeInterval) -> String? {
+    let task = Process()
+    task.executableURL = URL(fileURLWithPath: path)
+    task.arguments = arguments
+    if let environment {
+        task.environment = environment
+    }
+    
+    let inputPipe = Pipe()
+    let outputPipe = Pipe()
+    let errorPipe = Pipe()
+    task.standardInput = inputPipe
+    task.standardOutput = outputPipe
+    task.standardError = errorPipe
+    
+    let exited = DispatchGroup()
+    exited.enter()
+    task.terminationHandler = { _ in exited.leave() }
+    
+    do {
+        try task.run()
+    } catch let err {
+        task.terminationHandler = nil
+        exited.leave()
+        debug("\(path): \(err.localizedDescription)")
+        return nil
+    }
+    
+    var outputData = Data()
+    let drained = DispatchGroup()
+    drained.enter()
+    DispatchQueue.global(qos: .utility).async {
+        outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
+        drained.leave()
+    }
+    drained.enter()
+    DispatchQueue.global(qos: .utility).async {
+        _ = errorPipe.fileHandleForReading.readDataToEndOfFile()
+        drained.leave()
+    }
+    
+    var timedOut = false
+    if exited.wait(timeout: .now() + timeout) == .timedOut {
+        timedOut = true
+        task.terminate()
+        if exited.wait(timeout: .now() + 2) == .timedOut {
+            kill(task.processIdentifier, SIGKILL)
+            _ = exited.wait(timeout: .now() + 2)
+        }
+    }
+    
+    inputPipe.fileHandleForWriting.closeFile()
+    guard drained.wait(timeout: .now() + 2) == .success else {
+        error("\(path) did not exit within \(Int(timeout))s and could not be killed")
+        return nil
+    }
+    outputPipe.fileHandleForReading.closeFile()
+    errorPipe.fileHandleForReading.closeFile()
+    
+    if timedOut {
+        error("\(path) did not exit within \(Int(timeout))s, terminated")
+        return nil
+    }
+    
     let output = String(data: outputData, encoding: .utf8)
     guard let output, !output.isEmpty else { return nil }
     
