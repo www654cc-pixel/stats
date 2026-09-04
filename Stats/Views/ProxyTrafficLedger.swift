@@ -3,7 +3,7 @@
 //  Stats
 //
 //  Always-on per-server traffic accounting for the mihomo proxy. Polls the
-//  external-controller /connections endpoint every 2 s (independent of panel
+// external-controller /connections endpoint every 5 s (independent of panel
 //  visibility), attributes each connection's cumulative byte counters to its
 //  exit node (top-level chains[0]) mapped to its VPS (server host from the
 //  mihomo config), and accumulates the deltas into per-day buckets persisted
@@ -43,6 +43,23 @@ internal final class ProxyTrafficLedger {
         var version: Int = 1
         var days: [String: [String: NodeBytes]] = [:] // "yyyy-MM-dd" -> node -> bytes
         var connections: [String: ConnState] = [:]    // mihomo connection id -> last booked counters
+        // A node may move between VPS hosts. Keep every host it has used so
+        // historical buckets remain visible after a config change.
+        var nodeServerHistory: [String: [String]] = [:]
+
+        private enum CodingKeys: String, CodingKey {
+            case version, days, connections, nodeServerHistory
+        }
+
+        init() {}
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            self.version = try c.decodeIfPresent(Int.self, forKey: .version) ?? 1
+            self.days = try c.decodeIfPresent([String: [String: NodeBytes]].self, forKey: .days) ?? [:]
+            self.connections = try c.decodeIfPresent([String: ConnState].self, forKey: .connections) ?? [:]
+            self.nodeServerHistory = try c.decodeIfPresent([String: [String]].self, forKey: .nodeServerHistory) ?? [:]
+        }
     }
 
     // MARK: - state
@@ -56,8 +73,14 @@ internal final class ProxyTrafficLedger {
     private let connRetention: TimeInterval = 6 * 3600
 
     private var timer: Timer?
-    private let pollInterval: TimeInterval = 2
+    // Five seconds keeps the persistent accounting window bounded while
+    // avoiding an unconditional 43k requests/day for a menu-bar utility.
+    private let pollInterval: TimeInterval = 5
     private var started = false
+    // /connections can take longer than the 5 s timer interval. Only one
+    // request may be in flight; otherwise late responses are interpreted as
+    // counter resets and can be double-booked.
+    private var pollGate = ProxyTrafficPollGate()
 
     // node name -> VPS server host, parsed from the mihomo config so traffic
     // from different protocols on the same VPS is booked under one key
@@ -77,7 +100,7 @@ internal final class ProxyTrafficLedger {
     // last computed per-interval speed (bytes per second), for the UI
     private(set) var speedUp: Int64 = 0
     private(set) var speedDown: Int64 = 0
-    private var lastTotals: (up: Int64, down: Int64)?
+    private var lastTotals: (up: Int64, down: Int64, at: TimeInterval)?
 
     private let session: URLSession = {
         let c = URLSessionConfiguration.ephemeral
@@ -118,9 +141,9 @@ internal final class ProxyTrafficLedger {
     private init() {
         self.migrateLegacyFile()
         self.load()
-        // server map first, then the v1->v2 key migration that depends on it
+        // server map first, then the legacy key migration that depends on it
         self.queue.async {
-            self.loadServerMapLocked()
+            guard self.loadServerMapLocked(at: self.configPath) else { return }
             self.migrateToServerKeysLocked()
         }
         NotificationCenter.default.addObserver(
@@ -136,12 +159,12 @@ internal final class ProxyTrafficLedger {
     /// Idempotent: starts the always-on poll timer. Called from ProxyPortal
     /// init/start; safe to call multiple times.
     internal func start() {
-        DispatchQueue.main.async {
-            guard !self.started else { return }
-            self.started = true
-            self.poll()
-            self.timer = Timer.scheduledTimer(withTimeInterval: self.pollInterval, repeats: true) { [weak self] _ in
-                self?.poll()
+        DispatchQueue.main.async { [weak self] in
+            guard let ledger = self, !ledger.started else { return }
+            ledger.started = true
+            ledger.poll()
+            ledger.timer = Timer.scheduledTimer(withTimeInterval: ledger.pollInterval, repeats: true) { [weak ledger] _ in
+                ledger?.poll()
             }
         }
     }
@@ -153,16 +176,19 @@ internal final class ProxyTrafficLedger {
     /// VPS report the same merged totals.
     internal func usage(node: String) -> (Int64, Int64, Int64, Int64) {
         self.queue.sync {
-            let key = self.serverMap[node] ?? node
+            var keys = Set([self.serverMap[node] ?? node, node])
+            keys.formUnion(self.store.nodeServerHistory[node] ?? [])
             var mUp: Int64 = 0, mDown: Int64 = 0, tUp: Int64 = 0, tDown: Int64 = 0
             let prefix = self.monthPrefix
             for (day, nodes) in self.store.days where day.hasPrefix(prefix) {
-                guard let b = nodes[key] else { continue }
-                mUp += b.up
-                mDown += b.down
-                if day == self.todayKey {
-                    tUp = b.up
-                    tDown = b.down
+                for key in keys {
+                    guard let b = nodes[key] else { continue }
+                    mUp += b.up
+                    mDown += b.down
+                    if day == self.todayKey {
+                        tUp += b.up
+                        tDown += b.down
+                    }
                 }
             }
             return (mUp, mDown, tUp, tDown)
@@ -176,27 +202,44 @@ internal final class ProxyTrafficLedger {
     // MARK: - polling
 
     private func poll() {
+        guard self.pollGate.begin() else { return }
         self.refreshServerMapIfNeeded()
-        guard let url = URL(string: self.base + "/connections") else { return }
-        self.session.dataTask(with: url) { [weak self] data, _, err in
+        guard let url = URL(string: self.base + "/connections") else {
+            self.pollGate.finish()
+            return
+        }
+        self.session.dataTask(with: url) { [weak self] data, response, err in
             guard let self = self else { return }
             guard err == nil, let data = data,
+                  let response = response as? HTTPURLResponse,
+                  (200..<300).contains(response.statusCode),
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                // controller unreachable: drop stale speed and the totals
-                // baseline so a mihomo restart (counter reset) can't produce
-                // a bogus reading on recovery
-                self.queue.async {
-                    self.speedUp = 0
-                    self.speedDown = 0
-                    self.lastTotals = nil
-                }
+                self.markPollFailure()
                 return
             }
-            let connections = json["connections"] as? [[String: Any]] ?? []
-            let totalUp = (json["uploadTotal"] as? NSNumber)?.int64Value ?? 0
-            let totalDown = (json["downloadTotal"] as? NSNumber)?.int64Value ?? 0
-            self.queue.async { self.book(connections, totalUp: totalUp, totalDown: totalDown) }
+            guard let connections = json["connections"] as? [[String: Any]],
+                  let totalUp = (json["uploadTotal"] as? NSNumber)?.int64Value,
+                  let totalDown = (json["downloadTotal"] as? NSNumber)?.int64Value else {
+                self.markPollFailure()
+                return
+            }
+            self.queue.async {
+                self.book(connections, totalUp: totalUp, totalDown: totalDown)
+                DispatchQueue.main.async { self.pollGate.finish() }
+            }
         }.resume()
+    }
+
+
+    private func markPollFailure() {
+        self.queue.async {
+            // controller unreachable or malformed: drop stale speed and the
+            // totals baseline so recovery cannot create a bogus rate spike.
+            self.speedUp = 0
+            self.speedDown = 0
+            self.lastTotals = nil
+            DispatchQueue.main.async { self.pollGate.finish() }
+        }
     }
 
     /// Books the per-connection deltas into today's bucket and derives the
@@ -240,12 +283,14 @@ internal final class ProxyTrafficLedger {
         }
 
         // speed from the global cumulative totals (stable across connection
-        // churn, unlike the per-connection counters)
+        // churn, unlike the per-connection counters). Use the actual elapsed
+        // response interval because SSH/API latency can exceed 2 seconds.
         if let prev = self.lastTotals {
-            self.speedUp = max(totalUp - prev.up, 0) / Int64(self.pollInterval)
-            self.speedDown = max(totalDown - prev.down, 0) / Int64(self.pollInterval)
+            let elapsed = now.timeIntervalSince1970 - prev.at
+            self.speedUp = ProxyTrafficRate.perSecond(delta: totalUp - prev.up, elapsed: elapsed)
+            self.speedDown = ProxyTrafficRate.perSecond(delta: totalDown - prev.down, elapsed: elapsed)
         }
-        self.lastTotals = (up: totalUp, down: totalDown)
+        self.lastTotals = (up: totalUp, down: totalDown, at: now.timeIntervalSince1970)
 
         self.prune(now: now)
         if self.dirty, now.timeIntervalSince(self.lastSaveAt) >= self.saveInterval {
@@ -276,15 +321,21 @@ internal final class ProxyTrafficLedger {
         guard let attrs = try? FileManager.default.attributesOfItem(atPath: path),
               let mtime = attrs[.modificationDate] as? Date else { return }
         guard self.configMtime != mtime else { return }
-        self.configMtime = mtime
-        self.queue.async { self.loadServerMapLocked() }
+        self.queue.async {
+            // Do not mark a timestamp as consumed before parsing succeeds;
+            // transient TCC/file-write errors must be retried on the next poll.
+            guard self.configMtime != mtime,
+                  self.loadServerMapLocked(at: path) else { return }
+            self.configMtime = mtime
+        }
     }
 
     /// Minimal scanner for the top-level `proxies:` list: pairs each
     /// `- name: X` with the next `server: Y`. Not a YAML parser — only
     /// handles the block style mihomo configs use. Runs on `queue`.
-    private func loadServerMapLocked() {
-        guard let text = try? String(contentsOfFile: self.configPath, encoding: .utf8) else { return }
+    @discardableResult
+    private func loadServerMapLocked(at path: String) -> Bool {
+        guard let text = try? String(contentsOfFile: path, encoding: .utf8) else { return false }
         var map: [String: String] = [:]
         var inProxies = false
         var currentName: String?
@@ -319,7 +370,19 @@ internal final class ProxyTrafficLedger {
                 if !host.isEmpty { map[name] = host }
             }
         }
-        if !map.isEmpty { self.serverMap = map }
+        guard !map.isEmpty else { return false }
+        self.serverMap = map
+        var historyChanged = false
+        for (node, host) in map {
+            var hosts = self.store.nodeServerHistory[node] ?? []
+            if !hosts.contains(host) {
+                hosts.append(host)
+                historyChanged = true
+            }
+            self.store.nodeServerHistory[node] = hosts
+        }
+        if historyChanged { self.dirty = true }
+        return true
     }
 
     private static func unquote(_ s: String) -> String {
@@ -328,9 +391,9 @@ internal final class ProxyTrafficLedger {
         return s
     }
 
-    /// v1 booked per node name; v3 books per server host (v2 shipped with a
-    /// config path the app could not read, so its merge ran with an empty
-    /// map — re-run it). Merges existing day buckets through the server map
+    /// Legacy versions booked per node name; v3 books per server host (v2
+    /// shipped with a config path the app could not read, so its merge ran
+    /// with an empty map — re-run it). Merges existing day buckets through the server map
     /// once (unmapped keys, e.g. DIRECT or removed nodes, are kept as-is).
     /// Runs on `queue`.
     private func migrateToServerKeysLocked() {

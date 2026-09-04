@@ -28,6 +28,7 @@ internal class ProxyPortal: NSStackView {
     private var currentField = NSTextField(labelWithString: "")
     private var currentDelayField = NSTextField(labelWithString: "")
     private var usageField = NSTextField(labelWithString: "")
+    private var vpsField = NSTextField(labelWithString: "")
     private let chevron = NSImageView()
     private let header = NSStackView()
     private let usageRow = NSStackView()
@@ -47,12 +48,14 @@ internal class ProxyPortal: NSStackView {
     private var allDelaysTestedAt: Date = .distantPast
     private let allDelayCacheInterval: TimeInterval = 300 // 5 min
 
-    private let session: URLSession = {
+    private static func makeSession() -> URLSession {
         let c = URLSessionConfiguration.ephemeral
         c.timeoutIntervalForRequest = 6
         c.waitsForConnectivity = false
         return URLSession(configuration: c)
-    }()
+    }
+    private var session: URLSession = ProxyPortal.makeSession()
+    private var active = false
 
     // becomes false when the controller cannot be reached
     internal private(set) var reachable: Bool = true
@@ -67,7 +70,9 @@ internal class ProxyPortal: NSStackView {
         self.distribution = .fill
         self.alignment = .width
         self.spacing = 4
-        self.edgeInsets = NSEdgeInsets(top: 10, left: 14, bottom: 10, right: 14)
+        // Match LauncherPortal's 54 pt utility-card height. Keep the VPS
+        // detail inline so it does not create another fixed-height grid row.
+        self.edgeInsets = NSEdgeInsets(top: 7, left: 14, bottom: 7, right: 14)
 
         self.titleField.font = Design.labelMediumFont
         self.titleField.textColor = .labelColor
@@ -117,8 +122,18 @@ internal class ProxyPortal: NSStackView {
         self.usageRow.orientation = .horizontal
         self.usageRow.distribution = .fill
         self.usageRow.alignment = .centerY
+        self.usageRow.spacing = 8
         self.usageRow.heightAnchor.constraint(equalToConstant: 14).isActive = true
         self.usageRow.addArrangedSubview(self.usageField)
+
+        // Inline VPS global traffic via vnstat; this preserves the existing
+        // utility-card footprint instead of adding a third row.
+        self.vpsField.font = NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .regular)
+        self.vpsField.textColor = Design.secondaryTextColor
+        self.vpsField.lineBreakMode = .byTruncatingTail
+        self.vpsField.alignment = .right
+        self.vpsField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        self.usageRow.addArrangedSubview(self.vpsField)
         self.addArrangedSubview(self.usageRow)
 
         let compactHeight = self.headerHeight + 4 + 14 + self.edgeInsets.top + self.edgeInsets.bottom
@@ -198,7 +213,9 @@ internal class ProxyPortal: NSStackView {
     }
 
     internal func start() {
+        self.active = true
         ProxyTrafficLedger.shared.start()
+        ProxyRemoteTraffic.shared.start()
         self.refreshState()
         self.refreshSpeed()
         self.speedTimer?.invalidate()
@@ -212,23 +229,32 @@ internal class ProxyPortal: NSStackView {
     }
 
     internal func stop() {
+        self.active = false
         self.speedTimer?.invalidate()
         self.speedTimer = nil
         self.testTimer?.invalidate()
         self.testTimer = nil
+        self.session.invalidateAndCancel()
+        self.session = Self.makeSession()
+        ProxyRemoteTraffic.shared.stop()
     }
 
     // MARK: - networking
 
     private func get(_ path: String, _ completion: @escaping ([String: Any]?) -> Void) {
         guard let url = URL(string: self.base + path) else { completion(nil); return }
-        self.session.dataTask(with: url) { data, _, err in
-            guard err == nil, let data = data,
-                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                completion(nil)
-                return
+        self.session.dataTask(with: url) { [weak self] data, _, err in
+            let json: [String: Any]?
+            if err == nil, let data,
+               let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                json = parsed
+            } else {
+                json = nil
             }
-            completion(json)
+            DispatchQueue.main.async {
+                guard let self, self.active else { return }
+                completion(json)
+            }
         }.resume()
     }
 
@@ -242,9 +268,49 @@ internal class ProxyPortal: NSStackView {
             .replacingOccurrences(of: "%1", with: Units(bytes: usage.1).getReadableMemory())
             .replacingOccurrences(of: "%2", with: Units(bytes: usage.2).getReadableMemory())
             .replacingOccurrences(of: "%3", with: Units(bytes: usage.3).getReadableMemory())
+        let compactUsageText = localizedString("Proxy compact usage")
+            .replacingOccurrences(of: "%0", with: Units(bytes: usage.0).getReadableMemory())
+            .replacingOccurrences(of: "%1", with: Units(bytes: usage.1).getReadableMemory())
+
+        // Fixed hkvps/ens17 global interface traffic. This is intentionally
+        // separate from the selected mihomo node's proxy-only ledger above.
+        let vps = ProxyRemoteTraffic.shared.snapshot()
+        let vpsText: String
+        let compactVpsText: String
+        if vps.totalsState != .live {
+            let key: String
+            if vps.totalsState == .loading {
+                key = "VPS traffic loading"
+            } else if vps.totalsState == .stale {
+                key = "VPS traffic stale"
+            } else {
+                key = "VPS traffic unavailable"
+            }
+            vpsText = localizedString(key)
+            compactVpsText = vpsText
+        } else {
+            let monthTotal = vps.monthRx + vps.monthTx
+            let dayTotal = vps.dayRx + vps.dayTx
+            // RX/TX are retained in the tooltip for auditability. The compact
+            // surface shows the total that can be compared directly with a
+            // monthly VPS allowance.
+            vpsText = localizedString("VPS traffic")
+                .replacingOccurrences(of: "%0", with: Units(bytes: monthTotal).getReadableMemory())
+                .replacingOccurrences(of: "%1", with: Units(bytes: vps.monthRx).getReadableMemory())
+                .replacingOccurrences(of: "%2", with: Units(bytes: vps.monthTx).getReadableMemory())
+                .replacingOccurrences(of: "%3", with: Units(bytes: dayTotal).getReadableMemory())
+                .replacingOccurrences(of: "%4", with: Units(bytes: vps.dayRx).getReadableMemory())
+                .replacingOccurrences(of: "%5", with: Units(bytes: vps.dayTx).getReadableMemory())
+            compactVpsText = localizedString("VPS compact traffic")
+                .replacingOccurrences(of: "%0", with: Units(bytes: monthTotal).getReadableMemory())
+        }
+        self.usageField.toolTip = usageText
+        self.vpsField.toolTip = vpsText
+
         DispatchQueue.main.async {
             self.speedField.stringValue = text
-            self.usageField.stringValue = usageText
+            self.usageField.stringValue = compactUsageText
+            self.vpsField.stringValue = compactVpsText
         }
     }
 
@@ -342,7 +408,10 @@ internal class ProxyPortal: NSStackView {
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = try? JSONSerialization.data(withJSONObject: ["name": name])
         self.session.dataTask(with: req) { [weak self] _, _, _ in
-            DispatchQueue.main.async { self?.refreshState() }
+            DispatchQueue.main.async {
+                guard let self, self.active else { return }
+                self.refreshState()
+            }
         }.resume()
     }
 
@@ -360,6 +429,7 @@ internal class ProxyPortal: NSStackView {
                 delay = (json["delay"] as? NSNumber)?.intValue ?? 0
             }
             DispatchQueue.main.async {
+                guard self.active else { return }
                 self.nodeDelays[name] = delay
                 if let item = self.openNodesMenu?.items.first(where: { ($0.representedObject as? String) == name }) {
                     item.title = self.menuTitle(name: name, delay: delay)

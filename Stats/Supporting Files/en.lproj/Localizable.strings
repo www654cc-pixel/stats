@@ -584,7 +584,13 @@
 "Quota countdown hour minute" = "%0h %1m";
 "Quota countdown day" = "%0d";
 "Quota countdown day hour" = "%0d %1h";
-"Proxy month usage" = "month ↑%0 ↓%1 · today ↑%2 ↓%3";
+"Proxy month usage" = "Proxy · month ↑%0 ↓%1 · today ↑%2 ↓%3";
+"Proxy compact usage" = "Proxy ↑%0 ↓%1";
+"VPS traffic" = "VPS global · month total %0 · RX %1 · TX %2 · today total %3 · RX %4 · TX %5";
+"VPS compact traffic" = "VPS month %0";
+"VPS traffic loading" = "VPS global · loading";
+"VPS traffic stale" = "VPS global · stale data";
+"VPS traffic unavailable" = "VPS global · temporarily unavailable";
 "Honcho memory" = "Honcho memory";
 "Online" = "Online";
 "Offline" = "Offline";

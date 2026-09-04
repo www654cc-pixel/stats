@@ -581,7 +581,13 @@
 "Quota countdown hour minute" = "%0时 %1分";
 "Quota countdown day" = "%0天";
 "Quota countdown day hour" = "%0天 %1时";
-"Proxy month usage" = "本月 ↑%0 ↓%1 · 今日 ↑%2 ↓%3";
+"Proxy month usage" = "代理流量 · 本月 ↑%0 ↓%1 · 今日 ↑%2 ↓%3";
+"Proxy compact usage" = "代理 ↑%0 ↓%1";
+"VPS traffic" = "VPS全局 · 本月总计 %0 · RX %1 · TX %2 · 今日总计 %3 · RX %4 · TX %5";
+"VPS compact traffic" = "VPS本月 %0";
+"VPS traffic loading" = "VPS全局 · 获取中";
+"VPS traffic stale" = "VPS全局 · 数据陈旧";
+"VPS traffic unavailable" = "VPS全局 · 暂时不可用";
 "Honcho memory" = "记忆";
 "Online" = "在线";
 "Offline" = "离线";
