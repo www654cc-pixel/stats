@@ -192,6 +192,10 @@
 "Display" = "显示器"; // gemma4:31b
 "System Power" = "系统功率";
 "External Power" = "外接电源";
+"Charger" = "充电器";
+"Charger input power" = "充电器输入功率";
+"Charger rated %0 W" = "充电器额定 %0 W";
+"Wall-side input ≈ %0 W (conversion loss %1 W)" = "墙插输入 ≈ %0 W(转换损耗 %1 W)";
 "Other" = "其他";
 "World Clocks" = "世界时钟";
 "Quota" = "额度";

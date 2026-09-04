@@ -25,6 +25,8 @@ internal struct PowerFlowModel {
 
     var systemTotal: Double? = nil   // PSTR
     var dcIn: Double? = nil          // PDTR
+    var adapterIn: Double? = nil     // live charger DC input (PowerTelemetryData.SystemPowerIn)
+    var adapterLoss: Double? = nil   // charger conversion loss (PowerTelemetryData.AdapterEfficiencyLoss)
     var cpu: Double? = nil
     var gpu: Double? = nil
     var display: Double? = nil       // PBLR (backlight)
@@ -40,6 +42,18 @@ internal struct PowerFlowModel {
     }
     var others: Double {
         max(self.system - (self.cpu ?? 0) - (self.gpu ?? 0) - (self.display ?? 0), 0)
+    }
+    // what the charger delivers right now: macOS 27 power telemetry first,
+    // then the PDTR SMC rail (dead on some Apple Silicon machines)
+    var adapterInput: Double? {
+        if let v = self.adapterIn, v > 0.1 { return v }
+        if let dc = self.dcIn, dc > 0.1 { return dc }
+        return nil
+    }
+    // what the charger draws from the wall: DC input plus its own conversion loss
+    var wallInput: Double? {
+        guard let v = self.adapterIn, v > 0.1 else { return nil }
+        return v + max(self.adapterLoss ?? 0, 0)
     }
 }
 
@@ -146,6 +160,8 @@ internal class PowerFlowPortal: NSStackView {
     private let infoField = NSTextField(labelWithString: "")
     private let totalField = NSTextField(labelWithString: "–")
     private let sourceField = NSTextField(labelWithString: "")
+    private let adapterIcon = NSImageView()
+    private let adapterField = NSTextField(labelWithString: "")
     private let breakdown = PowerBreakdownView()
     private let heroGrid = NSGridView()
 
@@ -162,6 +178,7 @@ internal class PowerFlowPortal: NSStackView {
     // and jittery (2-3x PSTR at times); smooth them to the same time scale as the
     // SMC power rails so the reading roughly conserves energy.
     private var batteryWattsEMA: Double? = nil
+    private var adapterInEMA: Double? = nil
     private var topProcessName: String?
     private var topProcessUsage: Double = 0
 
@@ -246,9 +263,21 @@ internal class PowerFlowPortal: NSStackView {
         self.totalField.textColor = .labelColor
         self.sourceField.font = .systemFont(ofSize: 10.5, weight: .regular)
         self.sourceField.textColor = Design.secondaryTextColor
+        // charger input readout: "外接电源 · ⚡25.3 W", monospaced digits so the
+        // live wattage doesn't jitter horizontally; green while charging
+        self.adapterIcon.image = NSImage(systemSymbolName: "bolt.fill", accessibilityDescription: localizedString("Charger input power"))
+        self.adapterIcon.symbolConfiguration = .init(pointSize: 8, weight: .bold)
+        self.adapterIcon.contentTintColor = .systemGreen
+        self.adapterField.font = NSFont.monospacedDigitSystemFont(ofSize: 10.5, weight: .semibold)
+        self.adapterField.textColor = .systemGreen
+        self.adapterField.setAccessibilityLabel(localizedString("Charger input power"))
+        let sourceRow = NSStackView(views: [self.sourceField, self.adapterIcon, self.adapterField])
+        sourceRow.orientation = .horizontal
+        sourceRow.alignment = .centerY
+        sourceRow.spacing = 3
         summary.addArrangedSubview(summaryLabel)
         summary.addArrangedSubview(self.totalField)
-        summary.addArrangedSubview(self.sourceField)
+        summary.addArrangedSubview(sourceRow)
 
         let battery = NSStackView()
         battery.orientation = .vertical
@@ -439,6 +468,19 @@ internal class PowerFlowPortal: NSStackView {
         }
         model.batteryWatts = self.batteryWattsEMA ?? rawWatts
 
+        // the telemetry input jumps between PD operating points as load changes;
+        // smooth it with the same EMA so the readout doesn't flicker
+        if let raw = model.adapterIn {
+            if let ema = self.adapterInEMA, ema * raw >= 0 {
+                self.adapterInEMA = 0.3 * raw + 0.7 * ema
+            } else {
+                self.adapterInEMA = raw
+            }
+            model.adapterIn = self.adapterInEMA
+        } else {
+            self.adapterInEMA = nil
+        }
+
         if let flow = self.sensorsPortal()?.lastPowerFlow {
             model.systemTotal = flow.systemTotal
             model.dcIn = flow.dcIn
@@ -467,6 +509,23 @@ internal class PowerFlowPortal: NSStackView {
         self.sourceField.stringValue = model.externalConnected
             ? localizedString("External Power")
             : localizedString("On battery")
+        if model.externalConnected, let input = model.adapterInput {
+            self.adapterField.stringValue = self.watts(input)
+            self.adapterIcon.isHidden = false
+            self.adapterField.isHidden = false
+            let tint = model.isCharging ? NSColor.systemGreen : Design.secondaryTextColor
+            self.adapterField.textColor = tint
+            self.adapterIcon.contentTintColor = tint
+            let tip = self.adapterTooltip(model)
+            self.sourceField.toolTip = tip
+            self.adapterIcon.toolTip = tip
+            self.adapterField.toolTip = tip
+        } else {
+            self.adapterField.stringValue = ""
+            self.adapterIcon.isHidden = true
+            self.adapterField.isHidden = true
+            self.sourceField.toolTip = nil
+        }
         self.breakdown.update(model)
         self.updateInfo(model)
 
@@ -479,8 +538,8 @@ internal class PowerFlowPortal: NSStackView {
         var parts: [String] = []
         if let sys = model.systemTotal, sys > 0.1 {
             parts.append("\(localizedString("System")) \(self.watts(sys))")
-        } else if let dc = model.dcIn, dc > 0.1 {
-            parts.append("适配器 \(self.watts(dc))")
+        } else if model.externalConnected, let input = model.adapterInput {
+            parts.append("\(localizedString("Charger")) \(self.watts(input))")
         }
         if let cpu = model.cpu, cpu > 0.05 {
             parts.append("CPU \(self.watts(cpu))")
@@ -492,6 +551,19 @@ internal class PowerFlowPortal: NSStackView {
             parts.append("\(name) \(String(format: "%.0f%%", self.topProcessUsage))")
         }
         self.infoField.stringValue = parts.joined(separator: "   ")
+    }
+
+    /// Details behind the charger readout: PD rating and the wall-side estimate
+    /// (DC input plus the charger's own conversion loss).
+    private func adapterTooltip(_ model: PowerFlowModel) -> String? {
+        var parts: [String] = []
+        if model.acRatedWatts > 0 {
+            parts.append(localizedString("Charger rated %0 W", "\(model.acRatedWatts)"))
+        }
+        if let wall = model.wallInput, let loss = model.adapterLoss {
+            parts.append(localizedString("Wall-side input ≈ %0 W (conversion loss %1 W)", self.watts(wall), self.watts(loss)))
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: "\n")
     }
 
     private func readBattery(into model: inout PowerFlowModel) {
@@ -522,6 +594,19 @@ internal class PowerFlowPortal: NSStackView {
             }
             if let amperage = intProp("Amperage"), let voltage = intProp("Voltage") {
                 model.batteryWatts = Double(amperage) * Double(voltage) / 1_000_000 // mA x mV -> W
+            }
+            // macOS 27 power telemetry: SystemPowerIn (mW) is the total DC input
+            // drawn from the charger — system load plus whatever the battery is
+            // taking; AdapterEfficiencyLoss (mW) is the charger's own heat, so
+            // wall-side input ≈ SystemPowerIn + loss. PDTR never fills in here.
+            if let raw = IORegistryEntryCreateCFProperty(service, "PowerTelemetryData" as CFString, kCFAllocatorDefault, 0),
+               let telemetry = raw.takeRetainedValue() as? [String: Any] {
+                if let powerIn = telemetry["SystemPowerIn"] as? Int, powerIn > 0 {
+                    model.adapterIn = Double(powerIn) / 1_000
+                }
+                if let loss = telemetry["AdapterEfficiencyLoss"] as? Int, loss > 0 {
+                    model.adapterLoss = Double(loss) / 1_000
+                }
             }
             // macOS 27 reports "(no estimate)" via IOPS, so the keys above read 0;
             // the battery gas gauge still computes smoothed averages — fall back to them.

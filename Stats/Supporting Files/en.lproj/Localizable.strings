@@ -202,6 +202,10 @@
 "Display" = "Display";
 "System Power" = "System Power";
 "External Power" = "External Power";
+"Charger" = "Charger";
+"Charger input power" = "Charger input power";
+"Charger rated %0 W" = "Charger rated %0 W";
+"Wall-side input ≈ %0 W (conversion loss %1 W)" = "Wall-side input ≈ %0 W (conversion loss %1 W)";
 "Other" = "Other";
 "World Clocks" = "World Clocks";
 "Quota" = "Quota";
