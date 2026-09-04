@@ -18,9 +18,12 @@ public struct Popup_c_s {
     public let spacing: CGFloat = 2
     public let headerHeight: CGFloat = 42
     public let separatorHeight: CGFloat = 30
-    public let portalHeight: CGFloat = 120
     public let radius: CGFloat = 6
     public let processHeight: CGFloat = 22
+    // fork: default content height for portals managing their own layout
+    // (removed upstream in the PortalWrapper redesign; still referenced by the
+    // fork's Clock portal and the Portal_p.height default)
+    public let portalHeight: CGFloat = 120
 }
 
 public struct Settings_c_s {

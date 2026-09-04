@@ -115,6 +115,8 @@ public class Clock: Module {
     private static var cachedList: (raw: Data, list: [Clock_t])? = nil
     
     public init() {
+        // fork: the Clock portal is a custom wide grid (not the upstream
+        // PortalWrapper list) and takes the initial clock list
         self.portalView = Portal(.clock, list: Clock.list)
         
         super.init(
