@@ -50,18 +50,18 @@ internal class LoadReader: Reader<CPU_Load> {
                 var total: Int32
                 if let prevCpuInfo = self.prevCpuInfo {
                     inUse = self.cpuInfo[Int(CPU_STATE_MAX * i + CPU_STATE_USER)]
-                        - prevCpuInfo[Int(CPU_STATE_MAX * i + CPU_STATE_USER)]
-                        + self.cpuInfo[Int(CPU_STATE_MAX * i + CPU_STATE_SYSTEM)]
-                        - prevCpuInfo[Int(CPU_STATE_MAX * i + CPU_STATE_SYSTEM)]
-                        + self.cpuInfo[Int(CPU_STATE_MAX * i + CPU_STATE_NICE)]
-                        - prevCpuInfo[Int(CPU_STATE_MAX * i + CPU_STATE_NICE)]
-                    total = inUse + (self.cpuInfo[Int(CPU_STATE_MAX * i + CPU_STATE_IDLE)]
-                        - prevCpuInfo[Int(CPU_STATE_MAX * i + CPU_STATE_IDLE)])
+                        &- prevCpuInfo[Int(CPU_STATE_MAX * i + CPU_STATE_USER)]
+                        &+ self.cpuInfo[Int(CPU_STATE_MAX * i + CPU_STATE_SYSTEM)]
+                        &- prevCpuInfo[Int(CPU_STATE_MAX * i + CPU_STATE_SYSTEM)]
+                        &+ self.cpuInfo[Int(CPU_STATE_MAX * i + CPU_STATE_NICE)]
+                        &- prevCpuInfo[Int(CPU_STATE_MAX * i + CPU_STATE_NICE)]
+                    total = inUse &+ (self.cpuInfo[Int(CPU_STATE_MAX * i + CPU_STATE_IDLE)]
+                        &- prevCpuInfo[Int(CPU_STATE_MAX * i + CPU_STATE_IDLE)])
                 } else {
                     inUse = self.cpuInfo[Int(CPU_STATE_MAX * i + CPU_STATE_USER)]
-                        + self.cpuInfo[Int(CPU_STATE_MAX * i + CPU_STATE_SYSTEM)]
-                        + self.cpuInfo[Int(CPU_STATE_MAX * i + CPU_STATE_NICE)]
-                    total = inUse + self.cpuInfo[Int(CPU_STATE_MAX * i + CPU_STATE_IDLE)]
+                        &+ self.cpuInfo[Int(CPU_STATE_MAX * i + CPU_STATE_SYSTEM)]
+                        &+ self.cpuInfo[Int(CPU_STATE_MAX * i + CPU_STATE_NICE)]
+                    total = inUse &+ self.cpuInfo[Int(CPU_STATE_MAX * i + CPU_STATE_IDLE)]
                 }
                 
                 if total != 0 {
@@ -354,7 +354,7 @@ public class FrequencyReader: Reader<CPU_Frequency> {
     }
     
     public override func read() {
-        guard !self.isReading, (!self.eCoreFreqs.isEmpty || !self.sCoreFreqs.isEmpty) && !self.pCoreFreqs.isEmpty, self.channels != nil, self.subscription != nil else { return }
+        guard !self.isReading, !self.eCoreFreqs.isEmpty || !self.pCoreFreqs.isEmpty || !self.sCoreFreqs.isEmpty, self.channels != nil, self.subscription != nil else { return }
         self.isReading = true
         let minECoreFreq = Double(self.eCoreFreqs.min() ?? 0)
         let minPCoreFreq = Double(self.pCoreFreqs.min() ?? 0)
