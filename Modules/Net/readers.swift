@@ -157,6 +157,9 @@ internal class UsageReader: Reader<Network_Usage>, CWEventDelegate {
     }
     
     private let wifiClient = CWWiFiClient.shared()
+    private let geolocationReader = IPGeolocationReader()
+    private let publicIPQueue = DispatchQueue(label: "eu.exelban.NetworkPublicIPGeneration")
+    private var publicIPGeneration: UInt64 = 0
     
     private var lastDetailsReadTS: Date = .distantPast
     
@@ -213,6 +216,8 @@ internal class UsageReader: Reader<Network_Usage>, CWEventDelegate {
         self.reachability.unreachable = {}
         self.stopListeningForWifiEvents()
         self.wifiClient.delegate = nil
+        self.invalidatePublicIPRequests()
+        self.geolocationReader.cancelAll()
     }
     
     public override func read() {
@@ -321,44 +326,15 @@ internal class UsageReader: Reader<Network_Usage>, CWEventDelegate {
     }
     
     private func readProcessBandwidth() -> Bandwidth {
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/usr/bin/nettop")
-        task.arguments = ["-P", "-L", "1", "-n", "-k", "time,interface,state,rx_dupe,rx_ooo,re-tx,rtt_avg,rcvsize,tx_win,tc_class,tc_mgt,cc_algo,P,C,R,W,arch"]
-        task.environment = [
-            "NSUnbufferedIO": "YES",
-            "LC_ALL": "en_US.UTF-8"
-        ]
-        
-        let inputPipe = Pipe()
-        let outputPipe = Pipe()
-        let errorPipe = Pipe()
-        
-        task.standardInput = inputPipe
-        task.standardOutput = outputPipe
-        task.standardError = errorPipe
-        
-        defer {
-            if task.isRunning {
-                task.terminate()
-            }
-            task.waitUntilExit()
-            inputPipe.fileHandleForWriting.closeFile()
-            outputPipe.fileHandleForReading.closeFile()
-            errorPipe.fileHandleForReading.closeFile()
-        }
-        
-        do {
-            try task.run()
-        } catch let err {
-            error("read bandwidth from processes: \(err)", log: self.log)
-            return Bandwidth()
-        }
-        
-        let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
-        let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
-        let output = String(data: outputData, encoding: .utf8)
-        _ = String(data: errorData, encoding: .utf8)
-        guard let output, !output.isEmpty else { return Bandwidth() }
+        guard let output = process(
+            path: "/usr/bin/nettop",
+            arguments: ["-P", "-L", "1", "-n", "-k", "time,interface,state,rx_dupe,rx_ooo,re-tx,rtt_avg,rcvsize,tx_win,tc_class,tc_mgt,cc_algo,P,C,R,W,arch"],
+            environment: [
+                "NSUnbufferedIO": "YES",
+                "LC_ALL": "en_US.UTF-8"
+            ],
+            timeout: 5
+        ) else { return Bandwidth() }
         
         var totalUpload: Int64 = 0
         var totalDownload: Int64 = 0
@@ -510,41 +486,7 @@ internal class UsageReader: Reader<Network_Usage>, CWEventDelegate {
     }
     
     private func systemProfilerAirport(timeout: TimeInterval) -> String? {
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/usr/sbin/system_profiler")
-        task.arguments = ["SPAirPortDataType", "-json"]
-        
-        let outputPipe = Pipe()
-        task.standardOutput = outputPipe
-        task.standardError = Pipe()
-        
-        do {
-            try task.run()
-        } catch let err {
-            error("read SPAirPortDataType: \(err)", log: self.log)
-            return nil
-        }
-        
-        var output: String?
-        let group = DispatchGroup()
-        group.enter()
-        DispatchQueue.global(qos: .utility).async {
-            let data = outputPipe.fileHandleForReading.readDataToEndOfFile()
-            output = String(data: data, encoding: .utf8)
-            group.leave()
-        }
-        
-        if group.wait(timeout: .now() + timeout) == .timedOut {
-            if task.isRunning {
-                task.terminate()
-            }
-            error("SPAirPortDataType timed out after \(Int(timeout))s, terminating", log: self.log)
-            return nil
-        }
-        
-        task.waitUntilExit()
-        guard let output, !output.isEmpty else { return nil }
-        return output
+        return process(path: "/usr/sbin/system_profiler", arguments: ["SPAirPortDataType", "-json"], timeout: timeout)
     }
     
     private func getLocalIP(_ pointer: UnsafeMutablePointer<ifaddrs>) {
@@ -565,6 +507,7 @@ internal class UsageReader: Reader<Network_Usage>, CWEventDelegate {
     
     private func getPublicIP() {
         guard self.publicIPState else { return }
+        let generation = self.beginPublicIPRequest()
         
         struct Addr_s: Decodable {
             let ipv4: String?
@@ -572,28 +515,102 @@ internal class UsageReader: Reader<Network_Usage>, CWEventDelegate {
             let country: String?
         }
         
-        DispatchQueue.global(qos: .userInitiated).async {
-            let response = syncShell("curl -s -4 https://api.mac-stats.com/ip")
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self else { return }
+            let response = process(
+                path: "/usr/bin/curl",
+                arguments: ["-s", "--fail", "-4", "https://api.mac-stats.com/ip"],
+                timeout: 10
+            ) ?? ""
             if !response.isEmpty, let data = response.data(using: .utf8),
-               let addr = try? JSONDecoder().decode(Addr_s.self, from: data) {
-                if let ip = addr.ipv4, self.isIPv4(ip) {
-                    self.usage.raddr.v4 = ip
-                }
-                if let countryCode = addr.country {
-                    self.usage.raddr.countryCode = countryCode
-                }
+               let addr = try? JSONDecoder().decode(Addr_s.self, from: data),
+               let ip = addr.ipv4, self.isPublicIP(ip, isIPv6: false), self.isCurrentPublicIPRequest(generation) {
+                self.updatePublicAddress(ip, isIPv6: false, countryCode: addr.country, generation: generation)
             }
         }
-        DispatchQueue.global(qos: .userInitiated).async {
-            let response = syncShell("curl -s -6 https://api.mac-stats.com/ip")
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self else { return }
+            let response = process(
+                path: "/usr/bin/curl",
+                arguments: ["-s", "--fail", "-6", "https://api.mac-stats.com/ip"],
+                timeout: 10
+            ) ?? ""
             if !response.isEmpty, let data = response.data(using: .utf8),
-               let addr = try? JSONDecoder().decode(Addr_s.self, from: data) {
-                if let ip = addr.ipv6, !self.isIPv4(ip) {
-                    self.usage.raddr.v6 = ip
+               let addr = try? JSONDecoder().decode(Addr_s.self, from: data),
+               let ip = addr.ipv6, self.isPublicIP(ip, isIPv6: true), self.isCurrentPublicIPRequest(generation) {
+                self.updatePublicAddress(ip, isIPv6: true, countryCode: addr.country, generation: generation)
+            }
+        }
+    }
+
+    private func updatePublicAddress(_ ip: String, isIPv6: Bool, countryCode: String?, generation: UInt64) {
+        // Keep the generation check and the read-modify-write together. IPv4
+        // and IPv6 requests finish independently; separate `usage` getter and
+        // setter calls would otherwise let one completion erase the other's
+        // address or location state.
+        let snapshot: Network_Usage? = self.publicIPQueue.sync {
+            guard self.publicIPGeneration == generation else { return nil }
+            return self.variablesQueue.sync {
+                var snapshot = self._usage
+                let normalizedCountryCode = countryCode.flatMap { code in
+                    code.isEmpty ? nil : code.uppercased()
                 }
-                if let countryCode = addr.country {
-                    self.usage.raddr.countryCode = countryCode
+                if isIPv6 {
+                    if snapshot.raddr.v6 != ip {
+                        snapshot.raddr.v6Location = nil
+                    }
+                    snapshot.raddr.v6CountryCode = normalizedCountryCode
+                    snapshot.raddr.v6 = ip
+                    snapshot.raddr.v6LocationState = .loading
+                } else {
+                    if snapshot.raddr.v4 != ip {
+                        snapshot.raddr.v4Location = nil
+                    }
+                    snapshot.raddr.v4CountryCode = normalizedCountryCode
+                    snapshot.raddr.v4 = ip
+                    snapshot.raddr.v4LocationState = .loading
                 }
+                snapshot.raddr.countryCode = normalizedCountryCode
+                self._usage = snapshot
+                return snapshot
+            }
+        }
+        guard let snapshot else { return }
+        self.callback(snapshot)
+
+        self.geolocationReader.lookup(ip) { [weak self] result in
+            guard let self else { return }
+            let latest: Network_Usage? = self.publicIPQueue.sync {
+                guard self.publicIPGeneration == generation else { return nil }
+                return self.variablesQueue.sync {
+                    var latest = self._usage
+                    if isIPv6 {
+                        guard latest.raddr.v6 == ip else { return nil }
+                        switch result {
+                        case let .success(location):
+                            latest.raddr.v6Location = location
+                            latest.raddr.v6LocationState = location == nil ? .unavailable : .available
+                        case .failure:
+                            latest.raddr.v6Location = nil
+                            latest.raddr.v6LocationState = .unavailable
+                        }
+                    } else {
+                        guard latest.raddr.v4 == ip else { return nil }
+                        switch result {
+                        case let .success(location):
+                            latest.raddr.v4Location = location
+                            latest.raddr.v4LocationState = location == nil ? .unavailable : .available
+                        case .failure:
+                            latest.raddr.v4Location = nil
+                            latest.raddr.v4LocationState = .unavailable
+                        }
+                    }
+                    self._usage = latest
+                    return latest
+                }
+            }
+            if let latest {
+                self.callback(latest)
             }
         }
     }
@@ -635,17 +652,51 @@ internal class UsageReader: Reader<Network_Usage>, CWEventDelegate {
         return nil
     }
     
-    private func isIPv4(_ ip: String) -> Bool {
-        let arr = ip.split(separator: ".").compactMap{ Int($0) }
-        return arr.count == 4 && arr.filter{ $0 >= 0 && $0 < 256}.count == 4
+    private func beginPublicIPRequest() -> UInt64 {
+        self.publicIPQueue.sync {
+            self.publicIPGeneration &+= 1
+            return self.publicIPGeneration
+        }
+    }
+
+    private func invalidatePublicIPRequests() {
+        self.publicIPQueue.sync {
+            self.publicIPGeneration &+= 1
+        }
+    }
+
+    private func isCurrentPublicIPRequest(_ generation: UInt64) -> Bool {
+        self.publicIPQueue.sync { self.publicIPGeneration == generation }
+    }
+
+    private func isPublicIP(_ ip: String, isIPv6: Bool) -> Bool {
+        guard ip.contains(":") == isIPv6 else { return false }
+        return IPGeolocationCore.classify(ip) == .publicAddress
     }
     
     @objc func refreshPublicIP() {
-        self.usage.raddr.v4 = nil
-        self.usage.raddr.v6 = nil
-        
-        DispatchQueue.global(qos: .background).async {
-            self.getPublicIP()
+        let snapshot: Network_Usage = self.publicIPQueue.sync {
+            self.publicIPGeneration &+= 1
+            return self.variablesQueue.sync {
+                var snapshot = self._usage
+                snapshot.raddr.v4 = nil
+                snapshot.raddr.v6 = nil
+                snapshot.raddr.countryCode = nil
+                snapshot.raddr.v4CountryCode = nil
+                snapshot.raddr.v6CountryCode = nil
+                snapshot.raddr.v4Location = nil
+                snapshot.raddr.v6Location = nil
+                snapshot.raddr.v4LocationState = .idle
+                snapshot.raddr.v6LocationState = .idle
+                self._usage = snapshot
+                return snapshot
+            }
+        }
+        self.geolocationReader.cancelAll()
+        self.callback(snapshot)
+
+        DispatchQueue.global(qos: .background).async { [weak self] in
+            self?.getPublicIP()
         }
     }
     
@@ -727,44 +778,15 @@ public class ProcessReader: Reader<[Network_Process]> {
             return
         }
         
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/usr/bin/nettop")
-        task.arguments = ["-P", "-L", "1", "-n", "-k", "time,interface,state,rx_dupe,rx_ooo,re-tx,rtt_avg,rcvsize,tx_win,tc_class,tc_mgt,cc_algo,P,C,R,W,arch"]
-        task.environment = [
-            "NSUnbufferedIO": "YES",
-            "LC_ALL": "en_US.UTF-8"
-        ]
-        
-        let inputPipe = Pipe()
-        let outputPipe = Pipe()
-        let errorPipe = Pipe()
-        
-        task.standardInput = inputPipe
-        task.standardOutput = outputPipe
-        task.standardError = errorPipe
-        
-        defer {
-            if task.isRunning {
-                task.terminate()
-            }
-            task.waitUntilExit()
-            inputPipe.fileHandleForWriting.closeFile()
-            outputPipe.fileHandleForReading.closeFile()
-            errorPipe.fileHandleForReading.closeFile()
-        }
-        
-        do {
-            try task.run()
-        } catch let error {
-            print(error)
-            return
-        }
-        
-        let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
-        let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
-        let output = String(data: outputData, encoding: .utf8)
-        _ = String(data: errorData, encoding: .utf8)
-        guard let output, !output.isEmpty else { return }
+        guard let output = process(
+            path: "/usr/bin/nettop",
+            arguments: ["-P", "-L", "1", "-n", "-k", "time,interface,state,rx_dupe,rx_ooo,re-tx,rtt_avg,rcvsize,tx_win,tc_class,tc_mgt,cc_algo,P,C,R,W,arch"],
+            environment: [
+                "NSUnbufferedIO": "YES",
+                "LC_ALL": "en_US.UTF-8"
+            ],
+            timeout: 5
+        ) else { return }
         
         var list: [Network_Process] = []
         var firstLine = false

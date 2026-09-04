@@ -74,6 +74,7 @@ public protocol CombinedNetPortal: AnyObject {
     var lastDownloadBytes: Int64? { get }   // bytes/s
     var lastUploadBytes: Int64? { get }     // bytes/s
     var lastPublicIP: String? { get }       // "1.2.3.4 (DE)"
+    var lastPublicIPLocation: String? { get } // estimated GeoIP summary
 }
 public protocol CombinedClockPortal: AnyObject {
     // computed at call time so the row always shows the current minute

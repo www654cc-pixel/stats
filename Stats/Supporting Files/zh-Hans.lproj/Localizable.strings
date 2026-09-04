@@ -40,6 +40,10 @@
 "Install" = "安装";
 "Cancel" = "取消";
 "Unavailable" = "不可用";
+"IP geolocation (estimated)" = "IP 归属地（估算）";
+"May represent a VPN or proxy exit." = "可能显示的是 VPN 或代理出口位置";
+"Loading IP location" = "正在查询 IP 归属地";
+"IP location unavailable" = "IP 归属地不可用";
 "Yes" = "是";
 "No" = "否";
 "Automatic" = "自动";

@@ -40,6 +40,10 @@
 "Install" = "Install";
 "Cancel" = "Cancel";
 "Unavailable" = "Unavailable";
+"IP geolocation (estimated)" = "IP geolocation (estimated)";
+"May represent a VPN or proxy exit." = "May represent a VPN or proxy exit.";
+"Loading IP location" = "Loading IP location";
+"IP location unavailable" = "IP location unavailable";
 "Yes" = "Yes";
 "No" = "No";
 "Automatic" = "Automatic";

@@ -514,13 +514,28 @@ internal class Popup: PopupWrapper {
                     resized = true
                 }
                 var ip = addr
-                if let cc = value.raddr.countryCode, !cc.isEmpty {
-                    if self.emojiCCState, let flag = countryFlag(cc) {
-                        ip += " \(flag)"
-                    } else {
-                        ip += " (\(cc))"
+                if let location = value.raddr.v4Location, let summary = IPGeolocationCore.summary(location) {
+                    ip += " · \(summary)"
+                    let estimated = localizedString("IP geolocation (estimated)")
+                    let proxyNote = localizedString("May represent a VPN or proxy exit.")
+                    self.publicIPv4Field?.toolTip = "\(estimated): \(summary)\n\(proxyNote)"
+                } else {
+                    if let cc = value.raddr.v4CountryCode ?? value.raddr.countryCode, !cc.isEmpty {
+                        if self.emojiCCState, let flag = countryFlag(cc) {
+                            ip += " \(flag)"
+                        } else {
+                            ip += " (\(cc))"
+                        }
                     }
-                    self.publicIPv4Field?.toolTip = cc
+                    let state = value.raddr.v4LocationState ?? .idle
+                    switch state {
+                    case .loading:
+                        self.publicIPv4Field?.toolTip = localizedString("Loading IP location")
+                    case .unavailable:
+                        self.publicIPv4Field?.toolTip = localizedString("IP location unavailable")
+                    default:
+                        self.publicIPv4Field?.toolTip = value.raddr.v4CountryCode ?? value.raddr.countryCode
+                    }
                 }
                 if self.publicIPv4Field?.stringValue != ip {
                     self.publicIPv4Field?.stringValue = ip
@@ -529,6 +544,7 @@ internal class Popup: PopupWrapper {
                 view.removeFromSuperview()
                 resized = true
                 self.publicIPv4Field?.stringValue = localizedString("Unknown")
+                self.publicIPv4Field?.toolTip = nil
             }
         }
         
@@ -539,13 +555,28 @@ internal class Popup: PopupWrapper {
                     resized = true
                 }
                 var ip = addr
-                if let cc = value.raddr.countryCode {
-                    if self.emojiCCState, let flag = countryFlag(cc) {
-                        ip += " \(flag)"
-                    } else {
-                        ip += " (\(cc))"
+                if let location = value.raddr.v6Location, let summary = IPGeolocationCore.summary(location) {
+                    ip += " · \(summary)"
+                    let estimated = localizedString("IP geolocation (estimated)")
+                    let proxyNote = localizedString("May represent a VPN or proxy exit.")
+                    self.publicIPv6Field?.toolTip = "\(estimated): \(summary)\n\(proxyNote)"
+                } else {
+                    if let cc = value.raddr.v6CountryCode ?? value.raddr.countryCode, !cc.isEmpty {
+                        if self.emojiCCState, let flag = countryFlag(cc) {
+                            ip += " \(flag)"
+                        } else {
+                            ip += " (\(cc))"
+                        }
                     }
-                    self.publicIPv6Field?.toolTip = cc
+                    let state = value.raddr.v6LocationState ?? .idle
+                    switch state {
+                    case .loading:
+                        self.publicIPv6Field?.toolTip = localizedString("Loading IP location")
+                    case .unavailable:
+                        self.publicIPv6Field?.toolTip = localizedString("IP location unavailable")
+                    default:
+                        self.publicIPv6Field?.toolTip = value.raddr.v6CountryCode ?? value.raddr.countryCode
+                    }
                 }
                 if self.publicIPv6Field?.stringValue != ip {
                     self.publicIPv6Field?.stringValue = ip
@@ -554,6 +585,7 @@ internal class Popup: PopupWrapper {
                 view.removeFromSuperview()
                 resized = true
                 self.publicIPv6Field?.stringValue = localizedString("Unknown")
+                self.publicIPv6Field?.toolTip = nil
             }
         }
         

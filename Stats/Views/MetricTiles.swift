@@ -313,12 +313,19 @@ internal class MetricTilesGrid: NSStackView {
             let down = p.lastDownloadBytes ?? 0
             let up = p.lastUploadBytes ?? 0
             tile.push(down: Double(down), up: Double(up))
+            var publicIP = p.lastPublicIP ?? ""
+            if let location = p.lastPublicIPLocation {
+                publicIP += publicIP.isEmpty ? location : " · \(location)"
+                tile.toolTip = "\(localizedString("IP geolocation (estimated)")): \(location)\n\(localizedString("May represent a VPN or proxy exit."))"
+            } else {
+                tile.toolTip = localizedString("Network")
+            }
             tile.set(
                 value: "↓ \(Units(bytes: down).getReadableSpeed())",
                 valueColor: .labelColor,
                 fraction: nil, barColor: .systemBlue,
                 left: "↑ \(Units(bytes: up).getReadableSpeed())",
-                right: p.lastPublicIP ?? ""
+                right: publicIP
             )
         }
 

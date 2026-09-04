@@ -33,6 +33,12 @@ public struct Network_addr: Codable {
     var v4: String? = nil
     var v6: String? = nil
     var countryCode: String? = nil
+    var v4CountryCode: String? = nil
+    var v6CountryCode: String? = nil
+    var v4Location: Network_IPLocation? = nil
+    var v6Location: Network_IPLocation? = nil
+    var v4LocationState: Network_IPLocationState? = nil
+    var v6LocationState: Network_IPLocationState? = nil
 }
 
 public struct Network_wifi: Codable {

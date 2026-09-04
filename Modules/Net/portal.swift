@@ -17,6 +17,7 @@ public class Portal: PortalWrapper, CombinedNetPortal {
     public private(set) var lastDownloadBytes: Int64?
     public private(set) var lastUploadBytes: Int64?
     public private(set) var lastPublicIP: String?
+    public private(set) var lastPublicIPLocation: String?
 
     private var chart: NetworkChartView? = nil
     private var initialized: Bool = false
@@ -115,9 +116,13 @@ public class Portal: PortalWrapper, CombinedNetPortal {
         self.lastDownloadBytes = value.bandwidth.download
         self.lastUploadBytes = value.bandwidth.upload
         if let addr = value.raddr.v4 {
-            self.lastPublicIP = (value.wifiDetails.countryCode != nil) ? "\(addr) (\(value.wifiDetails.countryCode!))" : addr
+            let countryCode = value.raddr.v4CountryCode ?? value.raddr.countryCode
+            let location = value.raddr.v4Location.flatMap { IPGeolocationCore.summary($0) }
+            self.lastPublicIP = location == nil ? countryCode.map { "\(addr) (\($0))" } ?? addr : addr
+            self.lastPublicIPLocation = location
         } else {
             self.lastPublicIP = nil
+            self.lastPublicIPLocation = nil
         }
         DispatchQueue.main.async(execute: {
             self.chart?.addValue(upload: Double(value.bandwidth.upload), download: Double(value.bandwidth.download))
@@ -142,7 +147,8 @@ public class Portal: PortalWrapper, CombinedNetPortal {
             
             if let view = self.publicIPField, view.stringValue != value.raddr.v4 {
                 if let addr = value.raddr.v4 {
-                    view.stringValue = (value.wifiDetails.countryCode != nil) ? "\(addr) (\(value.wifiDetails.countryCode!))" : addr
+                    let countryCode = value.raddr.v4CountryCode ?? value.raddr.countryCode
+                    view.stringValue = countryCode.map { "\(addr) (\($0))" } ?? addr
                 } else {
                     view.stringValue = localizedString("Unknown")
                 }
