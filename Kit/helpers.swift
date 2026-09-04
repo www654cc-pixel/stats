@@ -670,85 +670,71 @@ public func syncShell(_ args: String) -> String {
 }
 
 public func isNewestVersion(currentVersion: String, latestVersion: String) -> Bool {
-    let currentNumber = currentVersion.replacingOccurrences(of: "v", with: "")
-    let latestNumber = latestVersion.replacingOccurrences(of: "v", with: "")
-    
-    let currentArray = currentNumber.condenseWhitespace().split(separator: ".")
-    let latestArray = latestNumber.condenseWhitespace().split(separator: ".")
-    
-    var current = Version(major: Int(currentArray[0]) ?? 0, minor: Int(currentArray[1]) ?? 0, patch: Int(currentArray[2]) ?? 0)
-    var latest = Version(major: Int(latestArray[0]) ?? 0, minor: Int(latestArray[1]) ?? 0, patch: Int(latestArray[2]) ?? 0)
-    
-    if let patch = currentArray.last, patch.contains("-") {
-        let arr = patch.split(separator: "-")
-        if let patchNumber = arr.first {
-            current.patch = Int(patchNumber) ?? 0
-        }
-        if let beta = arr.last {
-            current.beta = Int(beta.replacingOccurrences(of: "beta", with: "")) ?? 0
-        }
+    struct ParsedVersion {
+        let base: [Int]
+        let beta: Int?
     }
-    
-    if let patch = latestArray.last, patch.contains("-") {
-        let arr = patch.split(separator: "-")
-        if let patchNumber = arr.first {
-            latest.patch = Int(patchNumber) ?? 0
+
+    func parse(_ raw: String) -> ParsedVersion? {
+        var value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if value.first == "v" || value.first == "V" {
+            value.removeFirst()
         }
-        if let beta = arr.last {
-            latest.beta = Int(beta.replacingOccurrences(of: "beta", with: "")) ?? 0
+        guard !value.isEmpty else { return nil }
+
+        let components = value.split(separator: ".", omittingEmptySubsequences: false)
+        guard !components.isEmpty, components.count <= 3 else { return nil }
+
+        var numbers = [Int](repeating: 0, count: 3)
+        var beta: Int?
+        for index in components.indices {
+            let component = String(components[index])
+            let versionParts = component.split(separator: "-", maxSplits: 1, omittingEmptySubsequences: false)
+            guard let numberPart = versionParts.first,
+                  !numberPart.isEmpty,
+                  numberPart.rangeOfCharacter(from: CharacterSet.decimalDigits.inverted) == nil,
+                  let number = Int(numberPart), number >= 0 else {
+                return nil
+            }
+            numbers[index] = number
+
+            if versionParts.count == 2 {
+                let suffix = versionParts[1].lowercased()
+                guard suffix.hasPrefix("beta"),
+                      let betaNumber = Int(suffix.dropFirst(4)), betaNumber >= 0 else {
+                    return nil
+                }
+                beta = betaNumber
+            }
         }
+        return ParsedVersion(base: numbers, beta: beta)
     }
-    
-    // current is not beta + latest is not beta
-    if current.beta == nil && latest.beta == nil {
-        if latest.major > current.major {
-            return true
-        }
-        
-        if latest.minor > current.minor && latest.major >= current.major {
-            return true
-        }
-        
-        if latest.patch > current.patch && latest.minor >= current.minor && latest.major >= current.major {
-            return true
-        }
+
+    guard let current = parse(currentVersion), let latest = parse(latestVersion) else {
+        return false
     }
-    
-    // current version is beta + last version is not beta
-    if current.beta != nil && latest.beta == nil {
-        if latest.major > current.major {
-            return true
-        }
-        
-        if latest.minor > current.minor && latest.major >= current.major {
-            return true
-        }
-        
-        if latest.patch >= current.patch && latest.minor >= current.minor && latest.major >= current.major {
-            return true
-        }
+
+    // Do not move an installed stable build onto a beta build, even if the
+    // beta's base version is numerically higher.
+    if current.beta == nil, latest.beta != nil {
+        return false
     }
-    
-    // current version is beta + last version is beta
-    if current.beta != nil && latest.beta != nil {
-        if latest.major > current.major {
-            return true
-        }
-        
-        if latest.minor > current.minor && latest.major >= current.major {
-            return true
-        }
-        
-        if latest.patch >= current.patch && latest.minor >= current.minor && latest.major >= current.major {
-            return true
-        }
-        
-        if latest.beta! > current.beta! && latest.patch >= current.patch && latest.minor >= current.minor && latest.major >= current.major {
-            return true
-        }
+
+    for (currentPart, latestPart) in zip(current.base, latest.base) {
+        if latestPart != currentPart { return latestPart > currentPart }
     }
-    
-    return false
+
+    switch (current.beta, latest.beta) {
+    case (nil, nil):
+        return false
+    case (.some, nil):
+        // A stable release supersedes a beta of the same base version.
+        return true
+    case (nil, .some):
+        return false // handled above; kept exhaustive for clarity
+    case let (.some(currentBeta), .some(latestBeta)):
+        return latestBeta > currentBeta
+    }
 }
 
 public func showNotification(title: String, subtitle: String? = nil, userInfo: [AnyHashable: Any] = [:], delegate: UNUserNotificationCenterDelegate? = nil) -> String {
@@ -1028,6 +1014,87 @@ public func process(path: String, arguments: [String]) -> String? {
     let output = String(data: outputData, encoding: .utf8)
     guard let output, !output.isEmpty else { return nil }
     
+    return output
+}
+
+/// Runs a short-lived system command with bounded output and termination.
+/// Network readers must not block forever when a system utility hangs.
+public func process(path: String, arguments: [String], environment: [String: String]? = nil, timeout: TimeInterval) -> String? {
+    let task = Process()
+    task.executableURL = URL(fileURLWithPath: path)
+    task.arguments = arguments
+    if let environment {
+        task.environment = environment
+    }
+
+    let inputPipe = Pipe()
+    let outputPipe = Pipe()
+    let errorPipe = Pipe()
+    task.standardInput = inputPipe
+    task.standardOutput = outputPipe
+    task.standardError = errorPipe
+
+    let exited = DispatchGroup()
+    exited.enter()
+    task.terminationHandler = { _ in exited.leave() }
+
+    do {
+        try task.run()
+    } catch {
+        task.terminationHandler = nil
+        exited.leave()
+        debug("\(path): \(error.localizedDescription)")
+        return nil
+    }
+    inputPipe.fileHandleForWriting.closeFile()
+
+    // Read both pipes concurrently so a verbose command cannot block while
+    // the caller waits for process termination. The lock protects the small
+    // hand-off of the collected stdout after the reader has finished.
+    let outputLock = NSLock()
+    var outputData = Data()
+    let drained = DispatchGroup()
+    drained.enter()
+    DispatchQueue.global(qos: .utility).async {
+        let data = outputPipe.fileHandleForReading.readDataToEndOfFile()
+        outputLock.lock()
+        outputData = data
+        outputLock.unlock()
+        drained.leave()
+    }
+    drained.enter()
+    DispatchQueue.global(qos: .utility).async {
+        _ = errorPipe.fileHandleForReading.readDataToEndOfFile()
+        drained.leave()
+    }
+
+    var timedOut = false
+    if exited.wait(timeout: .now() + timeout) == .timedOut {
+        timedOut = true
+        task.terminate()
+        if exited.wait(timeout: .now() + 2) == .timedOut {
+            kill(task.processIdentifier, SIGKILL)
+            _ = exited.wait(timeout: .now() + 2)
+        }
+    }
+
+    guard drained.wait(timeout: .now() + 2) == .success else {
+        error("\(path) did not drain within \(Int(timeout))s")
+        return nil
+    }
+    outputPipe.fileHandleForReading.closeFile()
+    errorPipe.fileHandleForReading.closeFile()
+
+    if timedOut {
+        error("\(path) did not exit within \(Int(timeout))s, terminated")
+        return nil
+    }
+    guard task.terminationStatus == 0 else { return nil }
+
+    outputLock.lock()
+    defer { outputLock.unlock() }
+    let output = String(data: outputData, encoding: .utf8)
+    guard let output, !output.isEmpty else { return nil }
     return output
 }
 
