@@ -79,13 +79,13 @@ public class Quota: Module {
         self.popupView.loadCallback(value)
         self.portalView.loadCallback(value)
 
-        // Compact menu-bar text widget: "K35% C12% A80%" (remaining %)
+        // Compact menu-bar text widget: "K35% C88%" (remaining %).
         var parts: [String] = []
         if let k = value.kimi, let p = k.fiveHourRemainingPct {
             parts.append("K\(Int(p.rounded()))%")
         }
-        if let c = value.codex, let w = c.windows.first {
-            parts.append("C\(Int(w.utilization.rounded()))%")
+        if let c = value.codex, let w = c.weeklyWindow ?? c.fiveHourWindow ?? c.windows.first {
+            parts.append("C\(Int(max(0, 100 - w.utilization).rounded()))%")
         }
         let text = parts.isEmpty ? "—" : parts.joined(separator: " ")
 

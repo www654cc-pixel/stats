@@ -71,8 +71,8 @@ internal class Popup: PopupWrapper {
         ])
 
         let codex = PreferencesSection([
-            PreferencesRow("Codex · 主窗口", component: self.codexPrimaryField!),
-            PreferencesRow("Codex · 次窗口", component: self.codexSecondaryField!),
+            PreferencesRow("Codex · 5h 剩余", component: self.codexPrimaryField!),
+            PreferencesRow("Codex · 7d 剩余", component: self.codexSecondaryField!),
             PreferencesRow("Codex · 重置时间", component: self.codexResetField!)
         ])
 
@@ -118,18 +118,16 @@ internal class Popup: PopupWrapper {
         }
 
         if let c = value.codex {
-            if c.windows.indices.contains(0) {
-                let w = c.windows[0]
-                self.codexPrimaryField?.stringValue = "\(Int(w.utilization.rounded()))%"
+            if let w = c.fiveHourWindow {
+                self.codexPrimaryField?.stringValue = "\(Int(max(0, 100 - w.utilization).rounded()))%"
                     + (w.resetsAt != nil ? "  (重置 \(w.resetsAt!))" : "")
                 self.codexResetField?.stringValue = w.resetsAt ?? "—"
             } else {
                 self.codexPrimaryField?.stringValue = "—"
                 self.codexResetField?.stringValue = "—"
             }
-            if c.windows.indices.contains(1) {
-                let w = c.windows[1]
-                self.codexSecondaryField?.stringValue = "\(Int(w.utilization.rounded()))%"
+            if let w = c.weeklyWindow {
+                self.codexSecondaryField?.stringValue = "\(Int(max(0, 100 - w.utilization).rounded()))%"
             } else {
                 self.codexSecondaryField?.stringValue = "—"
             }

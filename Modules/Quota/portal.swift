@@ -152,16 +152,28 @@ public class Portal: PortalWrapper, CombinedQuotaPortal {
 
         // --- Kimi (5h + weekly) ---
         if let k = value.kimi {
-            let fiveH = k.fiveHourRemainingPct.map { max(0, $0) } ?? 0
-            let week  = k.weeklyRemainingPct.map { max(0, $0) } ?? 0
-            self.kimi5hBar?.value = fiveH / 100
-            self.kimi5hBar?.color = Self.quotaColor(fiveH)
-            self.kimi5hField?.stringValue = "\(Int(fiveH.rounded()))%"
-            self.kimiWeekBar?.value = week / 100
-            self.kimiWeekBar?.color = Self.quotaColor(week)
-            self.kimiWeekField?.stringValue = "\(Int(week.rounded()))%"
-            self.snapKimi5h = fiveH
-            self.snapKimiWeek = week
+            if let fiveH = k.fiveHourRemainingPct.map({ max(0, $0) }) {
+                self.kimi5hBar?.value = fiveH / 100
+                self.kimi5hBar?.color = Self.quotaColor(fiveH)
+                self.kimi5hField?.stringValue = "\(Int(fiveH.rounded()))%"
+                self.snapKimi5h = fiveH
+            } else {
+                self.kimi5hBar?.value = 0
+                self.kimi5hBar?.color = .lightGray
+                self.kimi5hField?.stringValue = "—"
+                self.snapKimi5h = nil
+            }
+            if let week = k.weeklyRemainingPct.map({ max(0, $0) }) {
+                self.kimiWeekBar?.value = week / 100
+                self.kimiWeekBar?.color = Self.quotaColor(week)
+                self.kimiWeekField?.stringValue = "\(Int(week.rounded()))%"
+                self.snapKimiWeek = week
+            } else {
+                self.kimiWeekBar?.value = 0
+                self.kimiWeekBar?.color = .lightGray
+                self.kimiWeekField?.stringValue = "—"
+                self.snapKimiWeek = nil
+            }
             self.snapKimi5hResetAt = k.fiveHourResetAt
             self.snapKimiWeekResetAt = k.weeklyResetAt
         } else {
