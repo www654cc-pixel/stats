@@ -75,8 +75,13 @@ osascript -e 'quit app "Stats"'
 ```
 
 The same mechanism can be disabled with `--disable-launch-at-login`. Verify the
-registration with `sfltool dumpbtm` and search for `eu.exelban.Stats` — the
-`2.eu.exelban.Stats` item must show `Disposition: [enabled, ...]`.
+registration with `sfltool dumpbtm` and search for `eu.exelban.Stats` — at least
+one `2.eu.exelban.Stats` item must show `Disposition: [enabled, ...]`. Repeated
+reinstalls leave stale records: older ones may show `[disabled, ...]` (upstream's
+official Team RP2S87B72W signature) alongside the operative ad-hoc one, and BTM
+marks a freshly-registered duplicate as disabled when an enabled record already
+exists — that is expected; what matters is that one enabled record for
+`/Applications/Stats.app` exists.
 
 **Pitfall — duplicate menu bar icons**: two Stats *processes* means two login
 mechanisms are both firing. SMAppService is the only supported one. A hand-made
