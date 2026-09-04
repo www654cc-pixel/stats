@@ -31,6 +31,10 @@ public class Portal: NSStackView, Portal_p, CombinedSensorsPortal {
     private var unknownSensorsState: Bool {
         Store.shared.bool(key: "Sensors_unknown", defaultValue: false)
     }
+
+    private var fanValueState: FanValue {
+        FanValue(rawValue: Store.shared.string(key: "Sensors_popup_fanValue", defaultValue: FanValue.percentage.rawValue)) ?? .percentage
+    }
     
     init(_ name: ModuleType) {
         self.name = name.stringValue
@@ -86,6 +90,7 @@ public class Portal: NSStackView, Portal_p, CombinedSensorsPortal {
         }
         list.forEach { s in
             let v = ValueSensorView(s, width: width, callback: {})
+            v.update(self.formattedValue(s))
             self.container.stackView.addArrangedSubview(v)
             self.list[s.key] = v
         }
@@ -129,11 +134,18 @@ public class Portal: NSStackView, Portal_p, CombinedSensorsPortal {
             if self.window?.isVisible ?? false {
                 values.forEach { (s: Sensor_p) in
                     if let v = self.list[s.key] as? ValueSensorView {
-                        v.update(s.formattedPopupValue)
+                        v.update(self.formattedValue(s))
                     }
                 }
             }
         })
     }
-    
+
+    private func formattedValue(_ sensor: Sensor_p) -> String {
+        if let fan = sensor as? Fan {
+            return self.fanValueState == .percentage ? "\(fan.percentage)%" : fan.formattedValue
+        }
+        return sensor.formattedPopupValue
+    }
+
 }
