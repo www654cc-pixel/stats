@@ -510,7 +510,10 @@ internal class PowerFlowPortal: NSStackView {
             ? localizedString("External Power")
             : localizedString("On battery")
         if model.externalConnected, let input = model.adapterInput {
-            self.adapterField.stringValue = self.watts(input)
+            // show the negotiated PD tier next to the live draw: "⚡13.7 / 40 W"
+            self.adapterField.stringValue = model.acRatedWatts > 0
+                ? String(format: "%.1f / %d W", input, model.acRatedWatts)
+                : self.watts(input)
             self.adapterIcon.isHidden = false
             self.adapterField.isHidden = false
             let tint = model.isCharging ? NSColor.systemGreen : Design.secondaryTextColor
