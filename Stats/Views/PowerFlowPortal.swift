@@ -6,6 +6,7 @@
 import Cocoa
 import Kit
 import IOKit.ps
+import IOKit.pwr_mgt
 
 // MARK: - model
 
@@ -42,6 +43,88 @@ internal struct PowerFlowModel {
     }
 }
 
+// MARK: - lid sleep prevention
+
+/// Keeps the current process from allowing ordinary system sleep while the
+/// user has explicitly enabled the lid-sleep control. This is deliberately a
+/// process-scoped assertion rather than a persistent `pmset` change. The
+/// controller remains active when the overview panel is hidden so the user can
+/// enable it and then close the lid.
+private final class LidSleepController {
+    private var assertionID: IOPMAssertionID = 0
+    private var powerMonitorTimer: Timer?
+    private(set) var isEnabled = false
+    private(set) var lastError: IOReturn?
+
+    @discardableResult
+    func enable() -> Bool {
+        guard !self.isEnabled else { return true }
+
+        var newAssertionID: IOPMAssertionID = 0
+        let result = IOPMAssertionCreateWithName(
+            kIOPMAssertionTypePreventSystemSleep as CFString,
+            IOPMAssertionLevel(kIOPMAssertionLevelOn),
+            localizedString("Prevent sleep when lid is closed") as CFString,
+            &newAssertionID
+        )
+        guard result == kIOReturnSuccess else {
+            self.lastError = result
+            error("Failed to create lid sleep-prevention assertion: IOReturn \(result)")
+            return false
+        }
+
+        self.assertionID = newAssertionID
+        self.isEnabled = true
+        self.lastError = nil
+        self.startPowerMonitor()
+        return true
+    }
+
+    func disable() {
+        self.powerMonitorTimer?.invalidate()
+        self.powerMonitorTimer = nil
+
+        guard self.isEnabled else {
+            self.lastError = nil
+            return
+        }
+
+        let result = IOPMAssertionRelease(self.assertionID)
+        if result != kIOReturnSuccess {
+            error("Failed to release lid sleep-prevention assertion: IOReturn \(result)")
+        }
+        self.assertionID = 0
+        self.isEnabled = false
+        self.lastError = nil
+    }
+
+    private func startPowerMonitor() {
+        guard self.powerMonitorTimer == nil else { return }
+        self.powerMonitorTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
+            guard let self = self, self.isEnabled else { return }
+            if !self.externalPowerIsConnected() {
+                self.disable()
+            }
+        }
+    }
+
+    private func externalPowerIsConnected() -> Bool {
+        let snapshot = IOPSCopyPowerSourcesInfo().takeRetainedValue()
+        let sources = IOPSCopyPowerSourcesList(snapshot).takeRetainedValue() as [CFTypeRef]
+        for source in sources {
+            guard let description = IOPSGetPowerSourceDescription(snapshot, source).takeUnretainedValue() as? [String: Any] else { continue }
+            if (description[kIOPSPowerSourceStateKey] as? String) != "Battery Power" {
+                return true
+            }
+        }
+        return false
+    }
+
+    deinit {
+        self.disable()
+    }
+}
+
 // MARK: - compact portal (status bar)
 
 internal class PowerFlowPortal: NSStackView {
@@ -56,6 +139,9 @@ internal class PowerFlowPortal: NSStackView {
     private let titleField = NSTextField(labelWithString: localizedString("System Overview"))
     private let statusChip = PowerChip()
     private let healthChip = PowerChip()
+    private let lidSleepChip = PowerChip()
+    private let lidSleepButton = NSButton()
+    private let lidSleepController = LidSleepController()
     private let levelBar = BatteryLevelBar()
     private let infoField = NSTextField(labelWithString: "")
     private let totalField = NSTextField(labelWithString: "–")
@@ -111,11 +197,29 @@ internal class PowerFlowPortal: NSStackView {
         header.addArrangedSubview(self.titleField)
         header.addArrangedSubview(NSView())
         header.addArrangedSubview(self.honchoPill)
+        self.lidSleepChip.isHidden = true
+        header.addArrangedSubview(self.lidSleepChip)
         header.addArrangedSubview(self.healthChip)
         header.addArrangedSubview(self.statusChip)
+        self.lidSleepButton.image = NSImage(systemSymbolName: "moon.zzz.fill", accessibilityDescription: localizedString("Prevent sleep when lid is closed"))
+        self.lidSleepButton.symbolConfiguration = .init(pointSize: 10, weight: .semibold)
+        self.lidSleepButton.contentTintColor = Design.secondaryTextColor
+        self.lidSleepButton.isBordered = false
+        self.lidSleepButton.focusRingType = .none
+        self.lidSleepButton.setButtonType(.toggle)
+        self.lidSleepButton.target = self
+        self.lidSleepButton.action = #selector(self.toggleLidSleep)
+        self.lidSleepButton.isEnabled = false
+        self.lidSleepButton.widthAnchor.constraint(equalToConstant: 22).isActive = true
+        self.lidSleepButton.setAccessibilityLabel(localizedString("Prevent sleep when lid is closed"))
+        self.lidSleepButton.toolTip = localizedString("Available on external power only")
+        header.addArrangedSubview(self.lidSleepButton)
         header.addArrangedSubview(self.headerButton(symbol: "chart.bar.fill", tooltip: localizedString("Open Activity Monitor"), action: #selector(self.openActivityMonitor)))
         header.addArrangedSubview(self.headerButton(symbol: "gearshape", tooltip: localizedString("Open module"), action: #selector(self.openCombinedSettings)))
         self.addArrangedSubview(header)
+
+        NotificationCenter.default.addObserver(self, selector: #selector(self.handleApplicationWillTerminate), name: NSApplication.willTerminateNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(self.handleCombinedModuleToggle), name: .toggleOneView, object: nil)
 
         // Honcho detail strip: hidden until the pill is clicked
         self.honchoDetail.isHidden = true
@@ -180,6 +284,11 @@ internal class PowerFlowPortal: NSStackView {
         fatalError("init(coder:) has not been implemented")
     }
 
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+        self.lidSleepController.disable()
+    }
+
     public override func updateLayer() {
         self.applyCardStyle()
     }
@@ -205,6 +314,57 @@ internal class PowerFlowPortal: NSStackView {
 
     @objc private func openCombinedSettings() {
         NotificationCenter.default.post(name: .toggleSettings, object: nil, userInfo: ["module": localizedString("System Overview")])
+    }
+
+    @objc private func handleApplicationWillTerminate() {
+        self.lidSleepController.disable()
+    }
+
+    @objc private func handleCombinedModuleToggle(_ notification: Notification) {
+        guard notification.userInfo?["module"] == nil else { return }
+        self.lidSleepController.disable()
+    }
+
+    @objc private func toggleLidSleep() {
+        guard self.lidSleepButton.isEnabled else { return }
+
+        if self.lidSleepController.isEnabled {
+            self.lidSleepController.disable()
+        } else {
+            _ = self.lidSleepController.enable()
+        }
+        self.updateLidSleepUI(externalPowerAvailable: self.lidSleepButton.isEnabled)
+    }
+
+    private func updateLidSleepUI(externalPowerAvailable: Bool) {
+        if !externalPowerAvailable {
+            self.lidSleepController.disable()
+        }
+
+        let enabled = self.lidSleepController.isEnabled
+        self.lidSleepButton.isEnabled = externalPowerAvailable
+        self.lidSleepButton.state = enabled ? .on : .off
+        self.lidSleepButton.contentTintColor = enabled
+            ? .systemGreen
+            : (externalPowerAvailable ? Design.secondaryTextColor : NSColor.tertiaryLabelColor)
+
+        if enabled {
+            self.lidSleepButton.toolTip = localizedString("Allow sleep when lid is closed")
+            self.lidSleepButton.setAccessibilityLabel(localizedString("Allow sleep when lid is closed"))
+            self.lidSleepChip.set(text: localizedString("Lid sleep prevention active"), symbol: "moon.zzz.fill", color: .systemGreen)
+            self.lidSleepChip.isHidden = false
+        } else if self.lidSleepController.lastError != nil {
+            self.lidSleepButton.toolTip = localizedString("Sleep prevention unavailable")
+            self.lidSleepButton.setAccessibilityLabel(localizedString("Sleep prevention unavailable"))
+            self.lidSleepChip.set(text: localizedString("Sleep prevention unavailable"), symbol: "exclamationmark.triangle.fill", color: .systemOrange)
+            self.lidSleepChip.isHidden = false
+        } else {
+            self.lidSleepButton.toolTip = externalPowerAvailable
+                ? localizedString("Prevent sleep when lid is closed")
+                : localizedString("Available on external power only")
+            self.lidSleepButton.setAccessibilityLabel(self.lidSleepButton.toolTip ?? "")
+            self.lidSleepChip.isHidden = true
+        }
     }
 
     // MARK: - honcho detail toggle
@@ -297,6 +457,7 @@ internal class PowerFlowPortal: NSStackView {
             self.isHidden = !self.available
             self.onResize?()
         }
+        self.updateLidSleepUI(externalPowerAvailable: model.externalConnected)
         guard self.available else { return }
 
         self.updateChips(model)

@@ -141,6 +141,11 @@
 
 // Settings
 "Open Activity Monitor" = "打开活动监视器";
+"Prevent sleep when lid is closed" = "合盖时防止系统睡眠";
+"Allow sleep when lid is closed" = "允许合盖时睡眠";
+"Available on external power only" = "仅接通外接电源时可用";
+"Lid sleep prevention active" = "合盖防睡眠";
+"Sleep prevention unavailable" = "防睡眠不可用";
 "Report a bug" = "报告漏洞";
 "Support the application" = "支持本应用";
 "Close application" = "关闭应用";

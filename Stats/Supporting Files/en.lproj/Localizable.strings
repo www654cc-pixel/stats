@@ -141,6 +141,11 @@
 
 // Settings
 "Open Activity Monitor" = "Open Activity Monitor";
+"Prevent sleep when lid is closed" = "Prevent sleep when lid is closed";
+"Allow sleep when lid is closed" = "Allow sleep when lid is closed";
+"Available on external power only" = "Available on external power only";
+"Lid sleep prevention active" = "Lid sleep prevention active";
+"Sleep prevention unavailable" = "Sleep prevention unavailable";
 "Report a bug" = "Report a bug";
 "Support the application" = "Support the application";
 "Close application" = "Close application";
