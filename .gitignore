@@ -14,3 +14,9 @@ SMC/smc
 
 Cartfile.resolved
 web
+
+# local tool state & design scratch (not for the public fork)
+.hermes/
+.workbuddy/
+sketches/
+redesign-preview-*.png

@@ -1,8 +1,11 @@
 # AGENTS.md
 
 Personal fork of [exelban/stats](https://github.com/exelban/stats) (macOS menu bar
-system monitor). Custom work is currently maintained on branch
-`feature/perf-optimizations`, rebased/re-applied on top of upstream releases (last base: v3.0.5). The user runs
+system monitor). Custom work is maintained on branch `master` (consolidated on
+2026-09-04 from `feature/perf-optimizations`, which was deleted after the
+fast-forward merge; `origin/master` now carries the full fork history),
+rebased/re-applied on top of upstream releases (last base: v3.0.9, upstream
+722f0fe1). The user runs
 this build daily on an Apple Silicon M5 MacBook, macOS 27, system language zh-Hans.
 
 ## Custom features (not in upstream)
