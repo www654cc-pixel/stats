@@ -199,6 +199,10 @@
 "Other" = "其他";
 "World Clocks" = "世界时钟";
 "Quota" = "额度";
+"Quota window short" = "5小时";
+"Quota window week" = "本周";
+"Quota window month" = "本月";
+"World Clock Local" = "本地";
 "System Overview" = "系统概览";
 "Previous month" = "上个月";
 "Next month" = "下个月";

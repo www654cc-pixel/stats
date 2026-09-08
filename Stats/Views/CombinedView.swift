@@ -507,17 +507,16 @@ private class Popup: NSStackView, Popup_p {
         }
         self.infoStrip.refresh()
 
-        // The wide dashboard uses an asymmetric 2:1 context row: calendar on
-        // the left, quotas + world clocks on the right. This is the key Bento
-        // break in the composition; the classic two-column popup keeps the
-        // compact linear arrangement for compatibility.
+        // The wide dashboard gives the calendar enough room for seven relaxed
+        // columns, then uses the remaining ~38% for quota countdowns and clocks.
+        // Those values need more horizontal room than the calendar's empty air.
         if dashboard {
-            let sidebarWidth = columnWidth
+            let sidebarWidth: CGFloat = 360
             let calendarWidth = width - sidebarWidth - spacing
-            // 252 clipped the world-clock heading once the quota area grew to
-            // three provider rows (3 × 22pt rows + header + insets ≈ 103pt on
-            // top of clock/calendar content); 264 restores the full fit.
-            let contextHeight: CGFloat = 264
+            // The context rail is two independent Bento cards (quota + clocks).
+            // A little more height lets both cards breathe while preserving the
+            // calendar's wide 2:1 balance.
+            let contextHeight: CGFloat = 288
             self.calendar.setSize(width: calendarWidth, height: contextHeight)
             self.infoStrip.setWidth(sidebarWidth, sidebar: true, height: contextHeight)
             self.calendar.refresh()
@@ -583,15 +582,16 @@ private class Popup: NSStackView, Popup_p {
 // data can never clip.
 private class InfoStrip: NSStackView {
     static let compactHeight: CGFloat = 62
-    static let sidebarFixedHeight: CGFloat = 264
+    static let sidebarFixedHeight: CGFloat = 288
 
     private var quotaSource: CombinedQuotaPortal?
     private var providerRows: [QuotaProviderRow] = []
     private var quotaBox: NSStackView?
     private var quotaSection: NSStackView?
     private var quotaHeader: NSView?
+    private var quotaColumnHeader: NSStackView?
     private var quotaWidthConstraint: NSLayoutConstraint?
-    private var sectionDivider: NSBox?
+    private var clockWidthConstraint: NSLayoutConstraint?
     private var heightConstraint: NSLayoutConstraint?
     private var sidebarMode: Bool = false
 
@@ -604,13 +604,11 @@ private class InfoStrip: NSStackView {
         super.init(frame: .zero)
 
         self.wantsLayer = true
-        self.applyCardStyle()
-
         self.orientation = .horizontal
         self.alignment = .centerY
         self.distribution = .fill
         self.spacing = 10
-        self.edgeInsets = NSEdgeInsets(top: 9, left: 14, bottom: 9, right: 12)
+        self.edgeInsets = NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
         self.heightConstraint = self.heightAnchor.constraint(equalToConstant: InfoStrip.compactHeight)
         self.heightConstraint?.isActive = true
 
@@ -619,6 +617,9 @@ private class InfoStrip: NSStackView {
         quotaSection.orientation = .vertical
         quotaSection.alignment = .width
         quotaSection.spacing = 8
+        quotaSection.edgeInsets = NSEdgeInsets(top: 11, left: 13, bottom: 11, right: 13)
+        quotaSection.wantsLayer = true
+        quotaSection.applyCardStyle()
         quotaSection.setContentHuggingPriority(.required, for: .vertical)
         quotaSection.setContentCompressionResistancePriority(.required, for: .vertical)
 
@@ -638,6 +639,34 @@ private class InfoStrip: NSStackView {
         quotaHeader.addArrangedSubview(NSView())
         quotaSection.addArrangedSubview(quotaHeader)
 
+        // The progress bars are a three-window comparison, rather than three
+        // anonymous meters. Keeping the window names in a dedicated header
+        // makes a quick glance answer both "how much" and "which limit".
+        let quotaColumnHeader = NSStackView()
+        quotaColumnHeader.orientation = .horizontal
+        quotaColumnHeader.alignment = .centerY
+        quotaColumnHeader.distribution = .fill
+        quotaColumnHeader.spacing = 8
+        let providerSpacer = NSView()
+        providerSpacer.widthAnchor.constraint(equalToConstant: QuotaProviderRow.labelWidth).isActive = true
+        quotaColumnHeader.addArrangedSubview(providerSpacer)
+
+        let windowHeader = NSStackView()
+        windowHeader.orientation = .horizontal
+        windowHeader.alignment = .centerY
+        windowHeader.distribution = .fillEqually
+        windowHeader.spacing = 8
+        windowHeader.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        for title in [localizedString("Quota window short"), localizedString("Quota window week"), localizedString("Quota window month")] {
+            let label = NSTextField(labelWithString: title)
+            label.font = .systemFont(ofSize: 9, weight: .medium)
+            label.textColor = Design.mutedTextColor
+            label.alignment = .center
+            windowHeader.addArrangedSubview(label)
+        }
+        quotaColumnHeader.addArrangedSubview(windowHeader)
+        quotaSection.addArrangedSubview(quotaColumnHeader)
+
         let q = NSStackView()
         q.orientation = .vertical
         q.alignment = .width
@@ -656,16 +685,12 @@ private class InfoStrip: NSStackView {
             q.addArrangedSubview(row)
         }
         quotaSection.addArrangedSubview(q)
+        quotaColumnHeader.widthAnchor.constraint(equalTo: q.widthAnchor).isActive = true
         self.addArrangedSubview(quotaSection)
         self.quotaBox = q
         self.quotaSection = quotaSection
         self.quotaHeader = quotaHeader
-
-        let divider = NSBox()
-        divider.boxType = .separator
-        divider.isHidden = true
-        self.addArrangedSubview(divider)
-        self.sectionDivider = divider
+        self.quotaColumnHeader = quotaColumnHeader
 
         // right: Clock (remaining width)
         let c = NSStackView()
@@ -673,6 +698,9 @@ private class InfoStrip: NSStackView {
         c.alignment = .centerY
         c.distribution = .fill
         c.spacing = 9
+        c.edgeInsets = NSEdgeInsets(top: 11, left: 13, bottom: 11, right: 13)
+        c.wantsLayer = true
+        c.applyCardStyle()
         self.addArrangedSubview(c)
         self.clockBox = c
 
@@ -685,7 +713,8 @@ private class InfoStrip: NSStackView {
     }
 
     public override func updateLayer() {
-        self.applyCardStyle()
+        self.quotaSection?.applyCardStyle()
+        self.clockBox?.applyCardStyle()
     }
 
     // set after the strip is in the popup tree and its width is known; using a
@@ -695,18 +724,29 @@ private class InfoStrip: NSStackView {
         self.sidebarMode = sidebar
         self.orientation = sidebar ? .vertical : .horizontal
         self.alignment = sidebar ? .width : .centerY
-        self.spacing = sidebar ? 8 : 10
-        self.edgeInsets = sidebar
-            ? NSEdgeInsets(top: 13, left: 14, bottom: 13, right: 14)
-            : NSEdgeInsets(top: 9, left: 14, bottom: 9, right: 12)
+        self.spacing = sidebar ? Design.gap : 10
+        self.edgeInsets = NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
         self.heightConstraint?.constant = height
         self.quotaHeader?.isHidden = !sidebar
-        self.sectionDivider?.isHidden = !sidebar
+        self.quotaColumnHeader?.isHidden = !sidebar
         self.quotaSection?.spacing = sidebar ? 6 : 8
+        self.quotaSection?.edgeInsets = sidebar
+            ? NSEdgeInsets(top: 11, left: 13, bottom: 11, right: 13)
+            : NSEdgeInsets(top: 9, left: 12, bottom: 9, right: 12)
+        self.clockBox?.edgeInsets = sidebar
+            ? NSEdgeInsets(top: 11, left: 13, bottom: 11, right: 13)
+            : NSEdgeInsets(top: 9, left: 12, bottom: 9, right: 12)
 
         self.quotaWidthConstraint?.isActive = false
+        self.clockWidthConstraint?.isActive = false
         self.quotaWidthConstraint = nil
-        if !sidebar {
+        self.clockWidthConstraint = nil
+        if sidebar {
+            self.quotaWidthConstraint = self.quotaSection?.widthAnchor.constraint(equalToConstant: width)
+            self.clockWidthConstraint = self.clockBox?.widthAnchor.constraint(equalToConstant: width)
+            self.quotaWidthConstraint?.isActive = true
+            self.clockWidthConstraint?.isActive = true
+        } else {
             self.quotaWidthConstraint = self.quotaSection?.widthAnchor.constraint(equalToConstant: width * 0.46)
             self.quotaWidthConstraint?.isActive = true
         }
@@ -861,14 +901,14 @@ private class InfoStrip: NSStackView {
             let block = NSStackView()
             block.orientation = .horizontal
             block.alignment = .firstBaseline
-            block.spacing = 4
+            block.spacing = 5
 
             let name = NSTextField(labelWithString: r.name)
-            name.font = .systemFont(ofSize: 11, weight: .regular)
+            name.font = .systemFont(ofSize: 11.5, weight: r.isLocal ? .semibold : .regular)
             name.textColor = r.isLocal ? .systemBlue : Design.secondaryTextColor
             let time = NSTextField(labelWithString: r.time)
-            time.font = .monospacedDigitSystemFont(ofSize: 12.5, weight: r.isLocal ? .semibold : .medium)
-            time.textColor = .labelColor
+            time.font = .monospacedDigitSystemFont(ofSize: r.isLocal ? 14 : 12.5, weight: r.isLocal ? .bold : .medium)
+            time.textColor = r.isLocal ? .systemBlue : .labelColor
             let delta = NSTextField(labelWithString: "")
             delta.font = .monospacedDigitSystemFont(ofSize: 9.5, weight: .regular)
             delta.textColor = Design.secondaryTextColor
@@ -876,7 +916,14 @@ private class InfoStrip: NSStackView {
             delta.widthAnchor.constraint(equalToConstant: 24).isActive = true
 
             block.addArrangedSubview(name)
-            if self.sidebarMode { block.addArrangedSubview(NSView()) }
+            if self.sidebarMode {
+                let localTag = NSTextField(labelWithString: localizedString("World Clock Local"))
+                localTag.font = .systemFont(ofSize: 8.5, weight: .medium)
+                localTag.textColor = .systemBlue
+                localTag.isHidden = !r.isLocal
+                block.addArrangedSubview(localTag)
+                block.addArrangedSubview(NSView())
+            }
             block.addArrangedSubview(time)
             block.addArrangedSubview(delta)
             box.addArrangedSubview(block)
@@ -932,7 +979,7 @@ private enum QuotaRowMetrics {
     static let insets: CGFloat = 9 * 2      // strip edge insets (top+bottom)
 
     static func stripHeight(visibleRows: Int, sidebar: Bool) -> CGFloat {
-        if sidebar { return 264 }           // dashboard context height (matches setWidth caller)
+        if sidebar { return InfoStrip.sidebarFixedHeight }
         let content = CGFloat(max(visibleRows, 1)) * rowHeight
             + CGFloat(max(visibleRows, 1) - 1) * rowSpacing
             + headerHeight
@@ -941,6 +988,7 @@ private enum QuotaRowMetrics {
 }
 
 private class QuotaProviderRow: NSStackView {
+    static let labelWidth: CGFloat = 42
     private let provider: QuotaProvider
     private let labelField: NSTextField
     // One slot per window column; slot 0..2 = 5h / weekly / monthly.
@@ -958,6 +1006,7 @@ private class QuotaProviderRow: NSStackView {
         self.labelField.lineBreakMode = .byTruncatingTail
         self.labelField.setContentCompressionResistancePriority(.required, for: .horizontal)
         self.labelField.setContentHuggingPriority(.required, for: .horizontal)
+        self.labelField.widthAnchor.constraint(equalToConstant: Self.labelWidth).isActive = true
 
         super.init(frame: .zero)
         self.orientation = .horizontal

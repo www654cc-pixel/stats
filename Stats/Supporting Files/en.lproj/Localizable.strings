@@ -209,6 +209,10 @@
 "Other" = "Other";
 "World Clocks" = "World Clocks";
 "Quota" = "Quota";
+"Quota window short" = "5h";
+"Quota window week" = "Week";
+"Quota window month" = "Month";
+"World Clock Local" = "LOCAL";
 "System Overview" = "System Overview";
 "Previous month" = "Previous month";
 "Next month" = "Next month";
