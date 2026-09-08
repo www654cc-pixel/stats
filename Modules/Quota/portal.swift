@@ -72,6 +72,10 @@ public class Portal: PortalWrapper, CombinedQuotaPortal {
     private var kimi5hField: NSTextField?
     private var kimiWeekBar: QuotaBar?
     private var kimiWeekField: NSTextField?
+    private var kimi2FiveHourBar: QuotaBar?
+    private var kimi2FiveHourField: NSTextField?
+    private var kimi2WeekBar: QuotaBar?
+    private var kimi2WeekField: NSTextField?
     private var codexBar: QuotaBar?
     private var codexField: NSTextField?
     // OpenCode Go rows: created up front, shown only while the key exists and
@@ -82,16 +86,22 @@ public class Portal: PortalWrapper, CombinedQuotaPortal {
     // snapshot for the combined overview's compact strip (CombinedQuotaPortal)
     private var snapKimi5h: Double?
     private var snapKimiWeek: Double?
+    private var snapKimi2FiveHour: Double?
+    private var snapKimi2Week: Double?
     private var snapCodex5hRem: Double?
     private var snapCodexWeekRem: Double?
     private var snapKimiErr: String?
+    private var snapKimi2Err: String?
     private var snapCodexErr: String?
     private var snapOpenCodeErr: String?
     private var snapKimiUpdatedAt: Date?
+    private var snapKimi2UpdatedAt: Date?
     private var snapCodexUpdatedAt: Date?
     private var snapOpenCodeUpdatedAt: Date?
     private var snapKimi5hResetAt: Date?
     private var snapKimiWeekResetAt: Date?
+    private var snapKimi2FiveHourResetAt: Date?
+    private var snapKimi2WeekResetAt: Date?
     private var snapCodex5hResetAt: Date?
     private var snapCodexWeekResetAt: Date?
     private var snapOpenCode5hRem: Double?
@@ -116,8 +126,10 @@ public class Portal: PortalWrapper, CombinedQuotaPortal {
             right: Constants.Popup.spacing * 2
         )
 
-        (self.kimi5hBar, self.kimi5hField)   = Self.makeRow(into: rows, label: "Kimi 5h")
-        (self.kimiWeekBar, self.kimiWeekField) = Self.makeRow(into: rows, label: "Kimi 周")
+        (self.kimi5hBar, self.kimi5hField)   = Self.makeRow(into: rows, label: "Kimi 1·5h")
+        (self.kimiWeekBar, self.kimiWeekField) = Self.makeRow(into: rows, label: "Kimi 1·周")
+        (self.kimi2FiveHourBar, self.kimi2FiveHourField) = Self.makeRow(into: rows, label: "Kimi 2·5h")
+        (self.kimi2WeekBar, self.kimi2WeekField) = Self.makeRow(into: rows, label: "Kimi 2·周")
         (self.codexBar, self.codexField)     = Self.makeRow(into: rows, label: localizedString("Quota Codex weekly"))
         (self.openCodeBars[0], self.openCodeFields[0]) = Self.makeRow(into: rows, label: "Go 5h")
         (self.openCodeBars[1], self.openCodeFields[1]) = Self.makeRow(into: rows, label: "Go 周")
@@ -162,7 +174,9 @@ public class Portal: PortalWrapper, CombinedQuotaPortal {
         guard let value else { return }
 
         self.snapKimiErr = value.kimiError
+        self.snapKimi2Err = value.kimi2Error
         self.snapKimiUpdatedAt = value.kimiUpdatedAt
+        self.snapKimi2UpdatedAt = value.kimi2UpdatedAt
         self.snapCodexUpdatedAt = value.codexUpdatedAt
         self.snapOpenCodeUpdatedAt = value.openCodeUpdatedAt
 
@@ -204,6 +218,14 @@ public class Portal: PortalWrapper, CombinedQuotaPortal {
             self.snapKimi5hResetAt = nil
             self.snapKimiWeekResetAt = nil
         }
+
+        self.applyKimi(value.kimi2,
+                       bars: (self.kimi2FiveHourBar, self.kimi2WeekBar),
+                       fields: (self.kimi2FiveHourField, self.kimi2WeekField))
+        self.snapKimi2FiveHour = value.kimi2?.fiveHourRemainingPct
+        self.snapKimi2Week = value.kimi2?.weeklyRemainingPct
+        self.snapKimi2FiveHourResetAt = value.kimi2?.fiveHourResetAt
+        self.snapKimi2WeekResetAt = value.kimi2?.weeklyResetAt
 
         // --- Codex ---
         // The API exposes the 5-hour and weekly windows independently, and either
@@ -293,19 +315,25 @@ public class Portal: PortalWrapper, CombinedQuotaPortal {
 
     public var kimiFiveHourPct: Double? { self.snapKimi5h }
     public var kimiWeeklyPct: Double? { self.snapKimiWeek }
+    public var kimi2FiveHourPct: Double? { self.snapKimi2FiveHour }
+    public var kimi2WeeklyPct: Double? { self.snapKimi2Week }
     public var codexFiveHourRemainingPct: Double? { self.snapCodex5hRem }
     public var codexWeeklyRemainingPct: Double? { self.snapCodexWeekRem }
     public var openCodeFiveHourRemainingPct: Double? { self.snapOpenCode5hRem }
     public var openCodeWeeklyRemainingPct: Double? { self.snapOpenCodeWeekRem }
     public var openCodeMonthlyRemainingPct: Double? { self.snapOpenCodeMonthRem }
     public var kimiError: String? { self.snapKimiErr }
+    public var kimi2Error: String? { self.snapKimi2Err }
     public var codexError: String? { self.snapCodexErr }
     public var openCodeError: String? { self.snapOpenCodeErr }
     public var kimiUpdatedAt: Date? { self.snapKimiUpdatedAt }
+    public var kimi2UpdatedAt: Date? { self.snapKimi2UpdatedAt }
     public var codexUpdatedAt: Date? { self.snapCodexUpdatedAt }
     public var openCodeUpdatedAt: Date? { self.snapOpenCodeUpdatedAt }
     public var kimiFiveHourResetAt: Date? { self.snapKimi5hResetAt }
     public var kimiWeeklyResetAt: Date? { self.snapKimiWeekResetAt }
+    public var kimi2FiveHourResetAt: Date? { self.snapKimi2FiveHourResetAt }
+    public var kimi2WeeklyResetAt: Date? { self.snapKimi2WeekResetAt }
     public var codexFiveHourResetAt: Date? { self.snapCodex5hResetAt }
     public var codexWeeklyResetAt: Date? { self.snapCodexWeekResetAt }
     public var openCodeFiveHourResetAt: Date? { self.snapOpenCode5hResetAt }
@@ -314,5 +342,22 @@ public class Portal: PortalWrapper, CombinedQuotaPortal {
 
     public func refreshQuota() {
         self.refreshHandler?()
+    }
+
+    private func applyKimi(_ quota: KimiQuota?, bars: (QuotaBar?, QuotaBar?), fields: (NSTextField?, NSTextField?)) {
+        let values = [quota?.fiveHourRemainingPct, quota?.weeklyRemainingPct]
+        let targetBars = [bars.0, bars.1]
+        let targetFields = [fields.0, fields.1]
+        for index in 0..<2 {
+            if let value = values[index] {
+                targetBars[index]?.value = value / 100
+                targetBars[index]?.color = Self.quotaColor(value)
+                targetFields[index]?.stringValue = "\(Int(value.rounded()))%"
+            } else {
+                targetBars[index]?.value = 0
+                targetBars[index]?.color = .lightGray
+                targetFields[index]?.stringValue = "—"
+            }
+        }
     }
 }

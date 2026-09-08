@@ -92,6 +92,8 @@ public protocol CombinedQuotaPortal: AnyObject {
     // survives a failed refresh — check the *UpdatedAt/*Error pair for staleness.
     var kimiFiveHourPct: Double? { get }
     var kimiWeeklyPct: Double? { get }
+    var kimi2FiveHourPct: Double? { get }
+    var kimi2WeeklyPct: Double? { get }
     var codexFiveHourRemainingPct: Double? { get } // present only while Codex exposes this window
     var codexWeeklyRemainingPct: Double? { get }   // 100 - weekly utilization, or nil
     // OpenCode Go: three windows (5h rolling / weekly / monthly), each present
@@ -100,17 +102,21 @@ public protocol CombinedQuotaPortal: AnyObject {
     var openCodeWeeklyRemainingPct: Double? { get }
     var openCodeMonthlyRemainingPct: Double? { get }
     var kimiError: String? { get }
+    var kimi2Error: String? { get }
     var codexError: String? { get }
     var openCodeError: String? { get }
     // When each source last returned usable data, so the dashboard can dim a
     // stale value instead of blanking it out on a single failed poll.
     var kimiUpdatedAt: Date? { get }
+    var kimi2UpdatedAt: Date? { get }
     var codexUpdatedAt: Date? { get }
     var openCodeUpdatedAt: Date? { get }
     // Original reset deadlines. The dashboard formats these against the current
     // time on every refresh, so countdown text advances without extra API polls.
     var kimiFiveHourResetAt: Date? { get }
     var kimiWeeklyResetAt: Date? { get }
+    var kimi2FiveHourResetAt: Date? { get }
+    var kimi2WeeklyResetAt: Date? { get }
     var codexFiveHourResetAt: Date? { get }
     var codexWeeklyResetAt: Date? { get }
     var openCodeFiveHourResetAt: Date? { get }

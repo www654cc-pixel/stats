@@ -101,6 +101,9 @@ internal final class ProxyTrafficLedger {
     private(set) var speedUp: Int64 = 0
     private(set) var speedDown: Int64 = 0
     private var lastTotals: (up: Int64, down: Int64, at: TimeInterval)?
+    // last /connections snapshot count, for the proxy panel's connection stats
+    private var lastConnTotal: Int = 0
+    private var lastConnDirect: Int = 0
 
     private let session: URLSession = {
         let c = URLSessionConfiguration.ephemeral
@@ -199,6 +202,13 @@ internal final class ProxyTrafficLedger {
         self.queue.sync { (self.speedUp, self.speedDown) }
     }
 
+    /// Last /connections snapshot: total, direct, and proxied connection counts.
+    internal func connectionCount() -> (total: Int, direct: Int, proxied: Int) {
+        self.queue.sync {
+            (self.lastConnTotal, self.lastConnDirect, self.lastConnTotal - self.lastConnDirect)
+        }
+    }
+
     // MARK: - polling
 
     private func poll() {
@@ -281,6 +291,13 @@ internal final class ProxyTrafficLedger {
             self.store.days[day] = dayNodes
             self.dirty = true
         }
+
+        // snapshot the connection count for the proxy panel's stats zone
+        self.lastConnTotal = connections.count
+        self.lastConnDirect = connections.filter { conn in
+            let chains = conn["chains"] as? [String] ?? []
+            return (chains.first ?? "DIRECT") == "DIRECT"
+        }.count
 
         // speed from the global cumulative totals (stable across connection
         // churn, unlike the per-connection counters). Use the actual elapsed

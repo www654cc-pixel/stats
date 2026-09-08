@@ -161,13 +161,16 @@ public struct OpenCodeQuota: Codable {
 
 public struct QuotaData: Codable {
     var kimi: KimiQuota?
+    var kimi2: KimiQuota?
     var codex: CodexQuota?
     var openCode: OpenCodeQuota?
     var updatedAt: Date?             // last read ATTEMPT
     var kimiUpdatedAt: Date?         // last time `kimi` actually came from the API
+    var kimi2UpdatedAt: Date?
     var codexUpdatedAt: Date?        // last time `codex.windows` actually came from the API
     var openCodeUpdatedAt: Date?     // last time `openCode` actually came from the API
     var kimiError: String?
+    var kimi2Error: String?
     var error: String?
 }
 
@@ -237,6 +240,8 @@ public class QuotaReader: Reader<QuotaData> {
         let group = DispatchGroup()
         var kimi: KimiQuota?
         var kimiErr: String?
+        var kimi2: KimiQuota?
+        var kimi2Err: String?
         var codex: CodexQuota?
         var openCode: OpenCodeQuota?
 
@@ -244,6 +249,13 @@ public class QuotaReader: Reader<QuotaData> {
         self.fetchKimi { q, err in
             kimi = q
             kimiErr = err
+            group.leave()
+        }
+
+        group.enter()
+        self.fetchKimi(keyName: "\(self.title)_kimiApiKey2") { q, err in
+            kimi2 = q
+            kimi2Err = err
             group.leave()
         }
 
@@ -283,6 +295,18 @@ public class QuotaReader: Reader<QuotaData> {
                 data.kimiError = kimiErr
             }
 
+            if let kimi2 {
+                data.kimi2 = kimi2
+                data.kimi2UpdatedAt = data.updatedAt
+                data.kimi2Error = nil
+            } else if kimi2Err != nil, let old = previous?.kimi2 {
+                data.kimi2 = old
+                data.kimi2UpdatedAt = previous?.kimi2UpdatedAt
+                data.kimi2Error = kimi2Err
+            } else {
+                data.kimi2Error = kimi2Err
+            }
+
             // Codex: same rule, keyed on whether this round produced any window.
             if let codex, !codex.windows.isEmpty {
                 data.codex = codex
@@ -309,15 +333,15 @@ public class QuotaReader: Reader<QuotaData> {
                 data.openCode = openCode
             }
 
-            if data.kimi == nil, data.codex?.windows.isEmpty ?? true, !(data.openCode?.hasAnyWindow ?? false) {
-                data.error = kimiErr ?? data.codex?.error ?? data.openCode?.error
+            if data.kimi == nil, data.kimi2 == nil, data.codex?.windows.isEmpty ?? true, !(data.openCode?.hasAnyWindow ?? false) {
+                data.error = kimiErr ?? kimi2Err ?? data.codex?.error ?? data.openCode?.error
             }
             self.callback(data)
 
             // Reader's own DB write is throttled to interval*10 (5h at a 30-minute
             // interval), which would leave a cold launch showing "—". Persist every
             // successful round so a restart starts from the last known numbers.
-            if kimi != nil || !(codex?.windows.isEmpty ?? true) || (openCode?.hasAnyWindow ?? false) {
+            if kimi != nil || kimi2 != nil || !(codex?.windows.isEmpty ?? true) || (openCode?.hasAnyWindow ?? false) {
                 self.save(data)
             }
         }
@@ -326,7 +350,11 @@ public class QuotaReader: Reader<QuotaData> {
     // MARK: Kimi For Coding
 
     private func fetchKimi(completion: @escaping (KimiQuota?, String?) -> Void) {
-        let apiKey = Store.shared.string(key: "\(self.title)_kimiApiKey", defaultValue: "")
+        self.fetchKimi(keyName: "\(self.title)_kimiApiKey", completion: completion)
+    }
+
+    private func fetchKimi(keyName: String, completion: @escaping (KimiQuota?, String?) -> Void) {
+        let apiKey = Store.shared.string(key: keyName, defaultValue: "")
         guard !apiKey.isEmpty else {
             completion(nil, nil) // not configured -> skip silently
             return

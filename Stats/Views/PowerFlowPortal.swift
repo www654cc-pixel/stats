@@ -168,11 +168,9 @@ internal class PowerFlowPortal: NSStackView {
     private var refreshTimer: Timer?
     private var topTicker: Int = 0
     private var topIsRunning: Bool = false
-    // Honcho memory-system status: pill in the header + expandable detail strip
-    private let honchoMonitor = HonchoStatusMonitor()
-    private let honchoPill = HonchoStatusPill()
-    private let honchoDetail = HonchoDetailStrip()
-    private var honchoDetailExpanded = false
+    // Honcho (self-hosted memory system) was retired 2026-09-08: its API,
+    // launchd jobs and deriver are gone, so the status pill, the expandable
+    // detail strip and the 15s poller were removed from this header.
     private var heightConstraint: NSLayoutConstraint?
     // EMA state for battery watts: raw Amperage×Voltage samples are instantaneous
     // and jittery (2-3x PSTR at times); smooth them to the same time scale as the
@@ -213,7 +211,6 @@ internal class PowerFlowPortal: NSStackView {
         header.addArrangedSubview(boltIcon)
         header.addArrangedSubview(self.titleField)
         header.addArrangedSubview(NSView())
-        header.addArrangedSubview(self.honchoPill)
         self.lidSleepChip.isHidden = true
         header.addArrangedSubview(self.lidSleepChip)
         header.addArrangedSubview(self.healthChip)
@@ -237,17 +234,6 @@ internal class PowerFlowPortal: NSStackView {
 
         NotificationCenter.default.addObserver(self, selector: #selector(self.handleApplicationWillTerminate), name: NSApplication.willTerminateNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(self.handleCombinedModuleToggle), name: .toggleOneView, object: nil)
-
-        // Honcho detail strip: hidden until the pill is clicked
-        self.honchoDetail.isHidden = true
-        self.addArrangedSubview(self.honchoDetail)
-
-        self.honchoPill.onClick = { [weak self] in self?.toggleHonchoDetail() }
-        self.honchoMonitor.onUpdate = { [weak self] model in
-            guard let self = self else { return }
-            self.honchoPill.set(model, expanded: self.honchoDetailExpanded)
-            self.honchoDetail.set(model)
-        }
 
         // Hero body: a large total-power readout, battery state, then a live
         // component breakdown. The unequal visual weights make the card read
@@ -396,18 +382,6 @@ internal class PowerFlowPortal: NSStackView {
         }
     }
 
-    // MARK: - honcho detail toggle
-
-    private func toggleHonchoDetail() {
-        self.honchoDetailExpanded.toggle()
-        self.honchoDetail.isHidden = !self.honchoDetailExpanded
-        // the card has a fixed height: grow/shrink by the strip + one stack gap
-        let delta: CGFloat = 22 + self.spacing
-        self.heightConstraint?.constant += self.honchoDetailExpanded ? delta : -delta
-        self.honchoPill.set(self.honchoMonitor.model, expanded: self.honchoDetailExpanded)
-        self.onResize?()
-    }
-
     private var widthConstraint: NSLayoutConstraint?
 
     internal func setWidth(_ width: CGFloat) {
@@ -438,13 +412,11 @@ internal class PowerFlowPortal: NSStackView {
         self.refreshTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
             self?.refresh()
         }
-        self.honchoMonitor.start()
     }
 
     internal func stop() {
         self.refreshTimer?.invalidate()
         self.refreshTimer = nil
-        self.honchoMonitor.stop()
     }
 
     // MARK: - data
@@ -538,22 +510,21 @@ internal class PowerFlowPortal: NSStackView {
     }
 
     private func updateInfo(_ model: PowerFlowModel) {
-        var parts: [String] = []
-        if let sys = model.systemTotal, sys > 0.1 {
-            parts.append("\(localizedString("System")) \(self.watts(sys))")
-        } else if model.externalConnected, let input = model.adapterInput {
-            parts.append("\(localizedString("Charger")) \(self.watts(input))")
-        }
-        if let cpu = model.cpu, cpu > 0.05 {
-            parts.append("CPU \(self.watts(cpu))")
-        }
-        if let gpu = model.gpu, gpu > 0.05 {
-            parts.append("GPU \(self.watts(gpu))")
+        // The caption belongs to the battery, not the system total above.
+        if !model.hasBattery {
+            self.infoField.stringValue = "—"
+        } else if model.charge > 0.1 {
+            self.infoField.stringValue = localizedString("Overview battery charging", self.watts(model.charge))
+        } else if model.discharge > 0.1 {
+            self.infoField.stringValue = localizedString("Overview battery discharging", self.watts(model.discharge))
+        } else {
+            self.infoField.stringValue = localizedString(model.isCharged ? "Fully charged" : "Overview battery idle")
         }
         if let name = self.topProcessName, self.topProcessUsage >= 1 {
-            parts.append("\(name) \(String(format: "%.0f%%", self.topProcessUsage))")
+            self.infoField.toolTip = "\(name) · CPU \(String(format: "%.0f%%", self.topProcessUsage))"
+        } else {
+            self.infoField.toolTip = nil
         }
-        self.infoField.stringValue = parts.joined(separator: "   ")
     }
 
     /// Details behind the charger readout: PD rating and the wall-side estimate
@@ -564,7 +535,7 @@ internal class PowerFlowPortal: NSStackView {
             parts.append(localizedString("Charger rated %0 W", "\(model.acRatedWatts)"))
         }
         if let wall = model.wallInput, let loss = model.adapterLoss {
-            parts.append(localizedString("Wall-side input ≈ %0 W (conversion loss %1 W)", self.watts(wall), self.watts(loss)))
+            parts.append(localizedString("Wall-side input ≈ %0 W (conversion loss %1 W)", String(format: "%.1f", wall), String(format: "%.1f", loss)))
         }
         return parts.isEmpty ? nil : parts.joined(separator: "\n")
     }
@@ -819,7 +790,7 @@ private final class PowerBreakdownView: NSStackView {
         let readings = [model.cpu, model.gpu, model.display, model.others]
         for (index, reading) in readings.enumerated() where index < self.values.count {
             if let value = reading, value > 0.01 {
-                self.values[index].stringValue = String(format: "%.1f W", value)
+                self.values[index].stringValue = String(format: "%.1fW", value)
             } else {
                 self.values[index].stringValue = "–"
             }

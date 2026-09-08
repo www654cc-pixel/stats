@@ -9,6 +9,7 @@ import Kit
 internal class Settings: NSStackView, Settings_v, NSTextFieldDelegate {
     private let title: String
     private var kimiApiKey: String = ""
+    private var kimiApiKey2: String = ""
     private var enableCodexState: Bool = true
     private var enableOpenCodeState: Bool = true
     private var updateIntervalValue: Int = 1800
@@ -22,6 +23,7 @@ internal class Settings: NSStackView, Settings_v, NSTextFieldDelegate {
         self.title = module.stringValue
 
         self.kimiApiKey = Store.shared.string(key: "\(self.title)_kimiApiKey", defaultValue: "")
+        self.kimiApiKey2 = Store.shared.string(key: "\(self.title)_kimiApiKey2", defaultValue: "")
         self.enableCodexState = Store.shared.bool(key: "\(self.title)_enableCodex", defaultValue: true)
         self.enableOpenCodeState = Store.shared.bool(key: "\(self.title)_enableOpenCode", defaultValue: true)
         self.updateIntervalValue = Store.shared.int(key: "\(self.title)_updateInterval", defaultValue: 1800)
@@ -40,10 +42,15 @@ internal class Settings: NSStackView, Settings_v, NSTextFieldDelegate {
         self.subviews.forEach { $0.removeFromSuperview() }
 
         self.addArrangedSubview(PreferencesSection([
-            PreferencesRow("Kimi API Key", component: self.inputField(
+            PreferencesRow("Kimi API Key 1", component: self.inputField(
                 id: "\(self.title)_kimiApiKey",
                 value: self.kimiApiKey,
-                placeholder: "粘贴 Kimi API Key（Bearer，用于 api.kimi.com/coding）"
+                placeholder: "第一个 Kimi API Key（兼容原设置）"
+            )),
+            PreferencesRow("Kimi API Key 2", component: self.inputField(
+                id: "\(self.title)_kimiApiKey2",
+                value: self.kimiApiKey2,
+                placeholder: "第二个 Kimi API Key（可选）"
             ))
         ]))
 
@@ -109,6 +116,10 @@ internal class Settings: NSStackView, Settings_v, NSTextFieldDelegate {
         if id == "\(self.title)_kimiApiKey" {
             self.kimiApiKey = field.stringValue.trimmingCharacters(in: .whitespaces)
             Store.shared.set(key: "\(self.title)_kimiApiKey", value: self.kimiApiKey)
+            self.callback()
+        } else if id == "\(self.title)_kimiApiKey2" {
+            self.kimiApiKey2 = field.stringValue.trimmingCharacters(in: .whitespaces)
+            Store.shared.set(key: "\(self.title)_kimiApiKey2", value: self.kimiApiKey2)
             self.callback()
         }
     }

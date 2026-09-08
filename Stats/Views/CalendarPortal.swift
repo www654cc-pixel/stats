@@ -110,7 +110,7 @@ internal class CalendarPortal: NSStackView {
             let idx = (self.cal.firstWeekday - 1 + i) % 7
             let label = NSTextField(labelWithString: self.cal.shortWeekdaySymbols[idx])
             label.font = NSFont.systemFont(ofSize: 10.5, weight: .medium)
-            label.textColor = Design.secondaryTextColor
+            label.textColor = Design.mutedTextColor
             label.alignment = .center
             // fillEqually only stretches arranged views whose hugging priority
             // doesn't resist; text fields hug at 250, so lower it explicitly —
@@ -146,7 +146,7 @@ internal class CalendarPortal: NSStackView {
         // while browsing other weeks
         self.footerField.font = NSFont.systemFont(ofSize: 10.5)
         self.footerField.textColor = Design.secondaryTextColor
-        self.footerField.alignment = .right
+        self.footerField.alignment = .left
         self.addArrangedSubview(self.footerField)
 
         self.goToday()
@@ -375,9 +375,12 @@ private class DayCell: NSView {
             self.highlight.widthAnchor.constraint(equalToConstant: 30),
             self.highlight.heightAnchor.constraint(equalToConstant: 22),
             self.label.centerXAnchor.constraint(equalTo: self.centerXAnchor),
-            self.label.centerYAnchor.constraint(equalTo: self.centerYAnchor, constant: -1),
+            // lift the digit 2pt so the event dot (pinned 1pt above the cell
+            // bottom) clears the glyph descender line instead of striking
+            // through it
+            self.label.centerYAnchor.constraint(equalTo: self.centerYAnchor, constant: -2),
             self.dot.centerXAnchor.constraint(equalTo: self.centerXAnchor),
-            self.dot.bottomAnchor.constraint(equalTo: self.bottomAnchor, constant: -3),
+            self.dot.bottomAnchor.constraint(equalTo: self.bottomAnchor, constant: -1),
             self.dot.widthAnchor.constraint(equalToConstant: 4),
             self.dot.heightAnchor.constraint(equalToConstant: 4)
         ])
@@ -428,11 +431,11 @@ private class DayCell: NSView {
             self.highlight.layer?.backgroundColor = NSColor.clear.cgColor
             self.label.font = NSFont.systemFont(ofSize: 13, weight: .medium)
             if !self.inMonth {
-                self.label.textColor = Design.mutedTextColor
+                self.label.textColor = .tertiaryLabelColor
             } else if self.hasFestival {
                 self.label.textColor = Design.warn
             } else if self.weekend {
-                self.label.textColor = Design.secondaryTextColor
+                self.label.textColor = Design.mutedTextColor
             } else {
                 self.label.textColor = .labelColor
             }

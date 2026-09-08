@@ -469,8 +469,6 @@
 "Power flow" = "电源流向";
 "CPU Rail" = "CPU 供电轨";
 "GPU Rail" = "GPU 供电轨";
-"Launchpad" = "启动器";
-"Add apps in settings" = "在设置中添加应用";
 "High power" = "CPU 占用";
 "Others" = "其他";
 "Is charging" = "充电中";
@@ -591,6 +589,8 @@
 "Quota OpenCode weekly" = "Go 周";
 "Quota OpenCode monthly" = "Go 月";
 "Quota provider Kimi" = "Kimi";
+"Quota provider Kimi 1" = "Kimi 1";
+"Quota provider Kimi 2" = "Kimi 2";
 "Quota provider Codex" = "Codex";
 "Quota provider OpenCode" = "Go";
 "Quota countdown imminent" = "即将重置";
@@ -600,10 +600,15 @@
 "Quota countdown hour minute" = "%0时 %1分";
 "Quota countdown day" = "%0天";
 "Quota countdown day hour" = "%0天 %1时";
-"Proxy month usage" = "代理流量 · 本月 ↑%0 ↓%1 · 今日 ↑%2 ↓%3";
-"Proxy compact usage" = "代理 ↑%0 ↓%1";
-"VPS traffic" = "VPS全局 · 本月总计 %0 · RX %1 · TX %2 · 今日总计 %3 · RX %4 · TX %5";
-"VPS compact traffic" = "VPS本月 %0";
+"Proxy switch hint" = "点击切换";
+"Proxy nodes" = "最快节点";
+"Proxy speed" = "速率";
+"Proxy stats" = "VPS";
+"Proxy connections" = "连接数";
+"Proxy node traffic" = "节点 · 本月 %0 · 今日 %1";
+"Proxy conn detail" = "%0 直连 · %1 代理";
+"Proxy updated" = "更新于 %0";
+"Proxy VPS day" = "今日 %0";
 "VPS traffic loading" = "VPS全局 · 获取中";
 "VPS traffic stale" = "VPS全局 · 数据陈旧";
 "VPS traffic unavailable" = "VPS全局 · 暂时不可用";
@@ -617,3 +622,14 @@
 "Running" = "运行中";
 "Stopped" = "已停止";
 "Honcho memory status" = "Honcho 记忆系统状态";
+
+"Overview remaining quota" = "剩余额度";
+"Overview quota reset" = "距重置";
+"Overview battery charging" = "充入 %0";
+"Overview battery discharging" = "输出 %0";
+"Overview battery idle" = "未充电";
+"Proxy overview title" = "代理连接";
+"Proxy server monthly" = "VPS · 本月流量";
+"Proxy mode rule" = "规则";
+"Proxy mode global" = "全局";
+"Proxy mode direct" = "直连";

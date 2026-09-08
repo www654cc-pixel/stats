@@ -12,6 +12,9 @@ internal class Popup: PopupWrapper {
     private var kimiUsdField: NSTextField?
     private var kimiResetField: NSTextField?
     private var kimiPlanField: NSTextField?
+    private var kimi2FiveHourField: NSTextField?
+    private var kimi2WeeklyField: NSTextField?
+    private var kimi2ResetField: NSTextField?
     private var codexPrimaryField: NSTextField?
     private var codexSecondaryField: NSTextField?
     private var codexResetField: NSTextField?
@@ -55,6 +58,9 @@ internal class Popup: PopupWrapper {
         self.kimiUsdField = self.valueField()
         self.kimiResetField = self.valueField()
         self.kimiPlanField = self.valueField()
+        self.kimi2FiveHourField = self.valueField()
+        self.kimi2WeeklyField = self.valueField()
+        self.kimi2ResetField = self.valueField()
         self.codexPrimaryField = self.valueField()
         self.codexSecondaryField = self.valueField()
         self.codexResetField = self.valueField()
@@ -69,11 +75,17 @@ internal class Popup: PopupWrapper {
         self.errorField?.preferredMaxLayoutWidth = Constants.Popup.width - (Constants.Popup.margins * 2)
 
         let kimi = PreferencesSection([
-            PreferencesRow("Kimi · 5 小时额度", component: self.kimi5hField!),
-            PreferencesRow("Kimi · 周额度", component: self.kimiWeeklyField!),
-            PreferencesRow("Kimi · 5h 剩余/上限", component: self.kimiUsdField!),
-            PreferencesRow("Kimi · 重置时间", component: self.kimiResetField!),
-            PreferencesRow("Kimi · 套餐 / 状态", component: self.kimiPlanField!)
+            PreferencesRow("Kimi 1 · 5 小时额度", component: self.kimi5hField!),
+            PreferencesRow("Kimi 1 · 周额度", component: self.kimiWeeklyField!),
+            PreferencesRow("Kimi 1 · 5h 剩余/上限", component: self.kimiUsdField!),
+            PreferencesRow("Kimi 1 · 重置时间", component: self.kimiResetField!),
+            PreferencesRow("Kimi 1 · 套餐 / 状态", component: self.kimiPlanField!)
+        ])
+
+        let kimi2 = PreferencesSection([
+            PreferencesRow("Kimi 2 · 5 小时额度", component: self.kimi2FiveHourField!),
+            PreferencesRow("Kimi 2 · 周额度", component: self.kimi2WeeklyField!),
+            PreferencesRow("Kimi 2 · 重置时间", component: self.kimi2ResetField!)
         ])
 
         let codex = PreferencesSection([
@@ -93,6 +105,7 @@ internal class Popup: PopupWrapper {
         ])
 
         self.addArrangedSubview(kimi)
+        self.addArrangedSubview(kimi2)
         self.addArrangedSubview(codex)
         self.addArrangedSubview(openCode)
         self.addArrangedSubview(meta)
@@ -128,6 +141,16 @@ internal class Popup: PopupWrapper {
             self.kimiUsdField?.stringValue = "—"
             self.kimiResetField?.stringValue = "—"
             self.kimiPlanField?.stringValue = "—"
+        }
+
+        if let k = value.kimi2 {
+            self.kimi2FiveHourField?.stringValue = k.fiveHourRemainingPct.map { "\(Int($0.rounded()))%" } ?? "—"
+            self.kimi2WeeklyField?.stringValue = k.weeklyRemainingPct.map { "\(Int($0.rounded()))%" } ?? "—"
+            self.kimi2ResetField?.stringValue = k.fiveHourReset ?? k.weeklyReset ?? "—"
+        } else {
+            self.kimi2FiveHourField?.stringValue = "未配置"
+            self.kimi2WeeklyField?.stringValue = "未配置"
+            self.kimi2ResetField?.stringValue = "—"
         }
 
         if let c = value.codex {

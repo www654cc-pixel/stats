@@ -34,11 +34,11 @@ internal enum Design {
     // text colors
     static let secondaryTextColor = NSColor(name: nil) { appearance in
         let dark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        return NSColor(calibratedWhite: dark ? 0.90 : 0.14, alpha: 1)
+        return NSColor(calibratedWhite: dark ? 0.78 : 0.32, alpha: 1)
     }
     static let mutedTextColor = NSColor(name: nil) { appearance in
         let dark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        return NSColor(calibratedWhite: dark ? 0.74 : 0.24, alpha: 1)
+        return NSColor(calibratedWhite: dark ? 0.62 : 0.43, alpha: 1)
     }
     static let titleColor = secondaryTextColor
     static let labelColor = NSColor.labelColor
@@ -138,8 +138,10 @@ internal enum Design {
 // MARK: - grid
 
 internal class MetricTilesGrid: NSStackView {
-    // 88pt is the first size that fits the full native type hierarchy without
-    // AppKit compressing/clipping the 11pt title row on localized builds.
+    // 92pt fits the content stack exactly: 11pt top inset + 14pt header +
+    // 2pt gap + 27pt (22pt display value) + 5pt gap + 4pt bar + 4pt gap +
+    // 13pt secondary row + 9pt bottom inset. Anything smaller makes Auto
+    // Layout compress the value field vertically and clip the digits.
     static let tileHeight: CGFloat = 96
 
     private var tiles: [String: MetricTile] = [:]
@@ -193,13 +195,15 @@ internal class MetricTilesGrid: NSStackView {
             return
         }
 
-        // classic popup (682px) and dashboard (1022px) both get a 3-column grid;
-        // only the narrow single-module popups fall back to fewer columns
-        let columns = max(1, min(3, Int(width / 220), active.count))
+        // Dashboard (~972pt) lays 6 tiles in a single row; classic popup (~682pt)
+        // narrows to 3 columns; only the single-module popups fall back further.
+        let columns = max(1, min(6, Int(width / 150), active.count))
 
         var row: NSStackView? = nil
+        var rowTiles: [MetricTile] = []
         for (i, spec) in active.enumerated() {
             if i % columns == 0 {
+                rowTiles = []
                 row = NSStackView()
                 row?.orientation = .horizontal
                 row?.spacing = self.spacing
@@ -212,6 +216,16 @@ internal class MetricTilesGrid: NSStackView {
             let tile = MetricTile(module: spec.name, symbol: spec.symbol, viz: spec.viz)
             self.tiles[spec.name] = tile
             row?.addArrangedSubview(tile)
+            rowTiles.append(tile)
+        }
+        // fillEqually degrades to fill when a tile's secondary text demands
+        // more width than the equal share (observed: Disk tile grew to 200pt
+        // while CPU shrank to 131pt). Pin equal widths explicitly — text
+        // truncates instead of deforming the grid.
+        if rowTiles.count > 1 {
+            for i in 1..<rowTiles.count {
+                rowTiles[0].widthAnchor.constraint(equalTo: rowTiles[i].widthAnchor).isActive = true
+            }
         }
         // pad the last row so tiles keep a uniform width (fillEqually sizes the fillers)
         if active.count % columns != 0 {
@@ -239,6 +253,27 @@ internal class MetricTilesGrid: NSStackView {
         if value >= critical { return Design.critical }
         if value >= warn { return Design.warn }
         return Design.accent
+    }
+
+    // units abbreviate to a single letter ("R47.2M · W490K") — the ~64pt
+    // left slot of a tile's secondary row cannot fit full "MB/s" spellings
+    static func compactSpeeds(read: Int64, write: Int64) -> String {
+        func compact(_ s: String) -> String {
+            let comps = s.split(separator: " ")
+            let value = String(comps.first ?? "")
+            // "MB/s" → "M", "KB/s" → "K", "GB/s" → "G"
+            let unit = String(comps.last ?? "").replacingOccurrences(of: "B/s", with: "")
+            return "\(value)\(unit)"
+        }
+        return "R\(compact(Units(bytes: read).getReadableSpeed())) · W\(compact(Units(bytes: write).getReadableSpeed()))"
+    }
+
+    // "70.5 GB" → "70.5G", "2.0 MB/s" → "2.0M" — single-letter units keep
+    // the tile secondary row inside its ~64pt slots
+    static func compactBytes(_ s: String) -> String {
+        s.replacingOccurrences(of: " ", with: "")
+            .replacingOccurrences(of: "B/s", with: "")
+            .replacingOccurrences(of: "B", with: "")
     }
 
     func refresh() {
@@ -292,14 +327,23 @@ internal class MetricTilesGrid: NSStackView {
         if let tile = self.tiles["Disk"], let p = self.portal("Disk", as: CombinedDiskPortal.self) {
             let usage = (p.lastPercentage ?? 0) * 100
             let color = self.threshold(usage, warn: 85, critical: 95)
+            // activity is the primary signal — give it the left (priority) slot
+            // and let the free-space figure truncate on the right instead
             var left = ""
-            if let free = p.lastFreeBytes {
-                left = "\(localizedString("Free")) \(DiskSize(free).getReadableMemory())"
+            if let read = p.lastReadBytes, let write = p.lastWriteBytes {
+                left = Self.compactSpeeds(read: read, write: write)
             }
             var right = ""
-            if let read = p.lastReadBytes, let write = p.lastWriteBytes {
-                right = "R \(Units(bytes: read).getReadableSpeed()) W \(Units(bytes: write).getReadableSpeed())"
+            if let free = p.lastFreeBytes {
+                // no "free" prefix — the % used in the hero value gives the
+                // context, and the prefix pushed the figure past the slot
+                right = Self.compactBytes(DiskSize(free).getReadableMemory())
             }
+            var tooltip = localizedString("Disk")
+            if let free = p.lastFreeBytes {
+                tooltip = "\(localizedString("Free")): \(DiskSize(free).getReadableMemory())"
+            }
+            tile.toolTip = tooltip
             tile.set(
                 value: "\(Int(usage.rounded()))%",
                 valueColor: .labelColor,
@@ -313,18 +357,20 @@ internal class MetricTilesGrid: NSStackView {
             let down = p.lastDownloadBytes ?? 0
             let up = p.lastUploadBytes ?? 0
             tile.push(down: Double(down), up: Double(up))
-            var publicIP = p.lastPublicIP ?? ""
+            // show the bare IP in the tile — appending the geolocation made the
+            // right slot truncate into an unreadable "113.249.233.132 ·…";
+            // the location stays available via the tooltip
+            let publicIP = p.lastPublicIP ?? ""
             if let location = p.lastPublicIPLocation {
-                publicIP += publicIP.isEmpty ? location : " · \(location)"
                 tile.toolTip = "\(localizedString("IP geolocation (estimated)")): \(location)\n\(localizedString("May represent a VPN or proxy exit."))"
             } else {
                 tile.toolTip = localizedString("Network")
             }
             tile.set(
-                value: "↓ \(Units(bytes: down).getReadableSpeed())",
+                value: "↓ \(Self.compactBytes(Units(bytes: down).getReadableSpeed()))",
                 valueColor: .labelColor,
                 fraction: nil, barColor: .systemBlue,
-                left: "↑ \(Units(bytes: up).getReadableSpeed())",
+                left: "↑ \(Self.compactBytes(Units(bytes: up).getReadableSpeed()))",
                 right: publicIP
             )
         }
@@ -341,7 +387,7 @@ internal class MetricTilesGrid: NSStackView {
                 valueColor: .labelColor,
                 fraction: min(temp / 100, 1), barColor: color,
                 left: left,
-                right: p.lastPower ?? ""
+                right: p.lastPower?.replacingOccurrences(of: " ", with: "") ?? ""
             )
         }
     }
@@ -390,7 +436,7 @@ internal class MetricTile: NSStackView {
         self.alignment = .leading
         self.distribution = .fill
         self.spacing = 0
-        self.edgeInsets = NSEdgeInsets(top: 12, left: 14, bottom: 10, right: 14)
+        self.edgeInsets = NSEdgeInsets(top: 11, left: 14, bottom: 9, right: 14)
 
         // header: colored SF Symbol + 11pt medium title — macOS control-header style
         let header = NSStackView()
@@ -409,8 +455,13 @@ internal class MetricTile: NSStackView {
         self.addArrangedSubview(header)
         self.setCustomSpacing(2, after: header)
 
-        // display value: 20pt semibold tabular — the hero number
+        // display value: 22pt semibold tabular — the hero number. Truncate
+        // rather than resist: a long sensor string must never widen the tile
+        // and break the equal-width grid.
         self.valueField.font = Design.valueFont
+        self.valueField.lineBreakMode = .byTruncatingTail
+        self.valueField.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        self.valueField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         self.addArrangedSubview(self.valueField)
         self.setCustomSpacing(5, after: self.valueField)
 
@@ -432,14 +483,18 @@ internal class MetricTile: NSStackView {
         secondary.orientation = .horizontal
         secondary.distribution = .fill
         secondary.alignment = .firstBaseline
-        self.leftField.font = .systemFont(ofSize: 10.5, weight: .medium)
+        secondary.spacing = 0
+        self.leftField.font = .systemFont(ofSize: 9.5, weight: .medium)
         self.leftField.textColor = Design.secondaryTextColor
         self.leftField.lineBreakMode = .byTruncatingTail
-        self.rightField.font = .systemFont(ofSize: 10.5, weight: .medium)
+        // left slot is the primary signal (系统/用户, ↑/↓, R/W) — it wins the
+        // width fight; the right slot (IP, free space) truncates first
+        self.leftField.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
+        self.rightField.font = .systemFont(ofSize: 9.5, weight: .medium)
         self.rightField.textColor = Design.secondaryTextColor
         self.rightField.alignment = .right
         self.rightField.lineBreakMode = .byTruncatingTail
-        self.rightField.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
+        self.rightField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         secondary.addArrangedSubview(self.leftField)
         secondary.addArrangedSubview(NSView())
         secondary.addArrangedSubview(self.rightField)
@@ -501,7 +556,14 @@ internal class MetricTile: NSStackView {
     func set(value: String, valueColor: NSColor, fraction: Double?, barColor: NSColor, left: String, right: String) {
         if value != self.lastValue {
             self.lastValue = value
-            self.valueField.stringValue = value
+            let display = NSMutableAttributedString(string: value, attributes: [.font: Design.valueFont])
+            // Keep units on the same baseline without giving them the visual
+            // weight of the measurement. Tabular digits prevent live jitter.
+            if let suffix = value.range(of: "[%°A-Za-z/]+$", options: .regularExpression) {
+                display.addAttribute(.font, value: NSFont.systemFont(ofSize: 14, weight: .medium),
+                                     range: NSRange(suffix, in: value))
+            }
+            self.valueField.attributedStringValue = display
         }
         if valueColor != self.lastValueColor {
             self.lastValueColor = valueColor
@@ -624,7 +686,7 @@ internal extension NSView {
     func applyCardStyle() {
         let liquidRadius: CGFloat = {
             if self is MetricTile { return 22 }
-            if self is ProxyPortal || self is LauncherPortal { return 20 }
+            if self is ProxyPortal { return 20 }
             return 28
         }()
 
@@ -637,13 +699,12 @@ internal extension NSView {
                 surface = LiquidGlassCardSurface(frame: self.bounds)
                 surface.identifier = surfaceID
                 surface.autoresizingMask = [.width, .height]
-                // Use the same transparent, refractive system glass as the
-                // compact utility strips. Readability comes from the adaptive
-                // tint below, not from switching dense cards to frosted glass.
-                surface.style = .clear
+                // Dense live data needs the system material to diffuse background
+                // content; clear glass lets underlying text compete with values.
+                surface.style = .regular
                 surface.cornerRadius = liquidRadius
                 if #available(macOS 27.0, *) {
-                    surface.effectIsInteractive = self is MetricTile || self is ProxyPortal || self is LauncherPortal
+                    surface.effectIsInteractive = self is MetricTile || self is ProxyPortal
                 }
                 self.addSubview(surface, positioned: .below, relativeTo: nil)
                 DispatchQueue.main.async { [weak self] in
@@ -652,9 +713,8 @@ internal extension NSView {
             }
             surface.frame = self.bounds
             surface.cornerRadius = liquidRadius
-            let compact = self is ProxyPortal || self is LauncherPortal
-            surface.style = .clear
-            surface.tintColor = Design.glassReadabilityTint(compact: compact)
+            surface.style = .regular
+            surface.tintColor = nil
             self.layer?.backgroundColor = NSColor.clear.cgColor
             self.layer?.borderWidth = 0
         } else {

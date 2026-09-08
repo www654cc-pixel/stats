@@ -11,27 +11,41 @@ import Cocoa
 import Kit
 
 internal class ProxyPortal: NSStackView {
-    // mihomo external-controller, overridable via Store
     private var controller: String {
         Store.shared.string(key: "CombinedProxy_controller", defaultValue: "127.0.0.1:9090")
     }
     private var base: String { "http://\(self.controller)" }
 
-    private let headerHeight: CGFloat = 22
-
     private var heightConstraint: NSLayoutConstraint?
+    private var widthConstraint: NSLayoutConstraint?
+    private var columnWidths: [NSLayoutConstraint] = []
     internal var onResize: (() -> Void)?
 
-    private var titleField = NSTextField(labelWithString: localizedString("Proxy"))
-    private var modeField = NSTextField(labelWithString: "")
-    private var speedField = NSTextField(labelWithString: "")
-    private var currentField = NSTextField(labelWithString: "")
-    private var currentDelayField = NSTextField(labelWithString: "")
-    private var usageField = NSTextField(labelWithString: "")
-    private var vpsField = NSTextField(labelWithString: "")
+    // Zone A: current node
+    private let titleField = NSTextField(labelWithString: localizedString("Proxy overview title"))
+    private let modeField = NSTextField(labelWithString: "")
+    private let currentField = NSTextField(labelWithString: "—")
+    private let delayChip = DelayChip()
+    private let switchHint = NSTextField(labelWithString: "")
+
+    // Zone B: inline top-5 node list
+    private let nodeList = NSStackView()
+    private var nodeRows: [ProxyNodeRow] = []
     private let chevron = NSImageView()
-    private let header = NSStackView()
-    private let usageRow = NSStackView()
+
+    // Zone C: speed + traffic
+    private let downSpeedField = NSTextField(labelWithString: "↓ —")
+    private let upSpeedField = NSTextField(labelWithString: "↑ —")
+    private let nodeTrafficField = NSTextField(labelWithString: "")
+    private let trafficBar = TrafficBar()
+
+    // Zone D: VPS + connections
+    private let vpsMonthField = NSTextField(labelWithString: "")
+    private let vpsDayField = NSTextField(labelWithString: "")
+    private let connTotalField = NSTextField(labelWithString: "—")
+    private let connDetailField = NSTextField(labelWithString: "")
+    private let updatedField = NSTextField(labelWithString: "")
+
     private weak var openNodesMenu: NSMenu?
 
     private var nodeNames: [String] = []
@@ -42,11 +56,8 @@ internal class ProxyPortal: NSStackView {
 
     private var speedTimer: Timer?
     private var testTimer: Timer?
-    // throttles full-list delay tests so we don't fire N concurrent HTTP
-    // requests every 30 s — only the current node is tested on each refresh;
-    // all nodes are tested lazily when the list is first expanded.
     private var allDelaysTestedAt: Date = .distantPast
-    private let allDelayCacheInterval: TimeInterval = 300 // 5 min
+    private let allDelayCacheInterval: TimeInterval = 300
 
     private static func makeSession() -> URLSession {
         let c = URLSessionConfiguration.ephemeral
@@ -57,90 +68,28 @@ internal class ProxyPortal: NSStackView {
     private var session: URLSession = ProxyPortal.makeSession()
     private var active = false
 
-    // becomes false when the controller cannot be reached
     internal private(set) var reachable: Bool = true
 
     init() {
-        super.init(frame: NSRect(x: 0, y: 0, width: Constants.Popup.width, height: self.headerHeight))
+        super.init(frame: NSRect(x: 0, y: 0, width: Constants.Popup.width, height: 0))
 
         self.wantsLayer = true
         self.applyCardStyle()
 
-        self.orientation = .vertical
+        self.orientation = .horizontal
         self.distribution = .fill
-        self.alignment = .width
-        self.spacing = 4
-        // Match LauncherPortal's 54 pt utility-card height. Keep the VPS
-        // detail inline so it does not create another fixed-height grid row.
-        self.edgeInsets = NSEdgeInsets(top: 7, left: 14, bottom: 7, right: 14)
+        self.alignment = .top
+        self.spacing = 0
+        self.edgeInsets = NSEdgeInsets(top: 14, left: 0, bottom: 14, right: 0)
 
-        self.titleField.font = Design.labelMediumFont
-        self.titleField.textColor = .labelColor
-        self.modeField.font = NSFont.systemFont(ofSize: 10, weight: .regular)
-        self.modeField.textColor = Design.secondaryTextColor
-        self.speedField.font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
-        self.speedField.textColor = Design.secondaryTextColor
-        self.speedField.alignment = .right
+        self.buildZoneA()
+        self.buildZoneB()
+        self.buildZoneC()
+        self.buildZoneD()
 
-        self.currentField.font = NSFont.systemFont(ofSize: 12, weight: .medium)
-        self.currentField.lineBreakMode = .byTruncatingTail
-        self.currentDelayField.font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
-        self.currentDelayField.textColor = Design.secondaryTextColor
-
-        self.chevron.image = NSImage(systemSymbolName: "chevron.down", accessibilityDescription: nil)
-        self.chevron.symbolConfiguration = .init(pointSize: 10, weight: .semibold)
-        self.chevron.contentTintColor = Design.mutedTextColor
-
-        self.header.orientation = .horizontal
-        self.header.distribution = .fill
-        self.header.alignment = .centerY
-        self.header.spacing = 6
-        self.header.heightAnchor.constraint(equalToConstant: self.headerHeight).isActive = true
-
-        // native section icon: globe, macOS network-accent teal
-        let globe = NSImageView()
-        globe.image = NSImage(systemSymbolName: "globe", accessibilityDescription: nil)
-        globe.symbolConfiguration = .init(pointSize: 11, weight: .semibold)
-        globe.contentTintColor = .systemTeal
-        globe.setContentHuggingPriority(.required, for: .horizontal)
-        self.header.addArrangedSubview(globe)
-        self.header.addArrangedSubview(self.titleField)
-        self.header.addArrangedSubview(self.modeField)
-        self.header.addArrangedSubview(NSView())
-        self.header.addArrangedSubview(self.currentField)
-        self.header.addArrangedSubview(self.currentDelayField)
-        self.header.addArrangedSubview(self.speedField)
-        self.header.addArrangedSubview(self.chevron)
-        let click = NSClickGestureRecognizer(target: self, action: #selector(self.showNodeMenu))
-        self.header.addGestureRecognizer(click)
-        self.addArrangedSubview(self.header)
-
-        // second row: per-node month/today traffic booked by ProxyTrafficLedger
-        self.usageField.font = NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .regular)
-        self.usageField.textColor = Design.secondaryTextColor
-        self.usageField.lineBreakMode = .byTruncatingTail
-        self.usageRow.orientation = .horizontal
-        self.usageRow.distribution = .fill
-        self.usageRow.alignment = .centerY
-        self.usageRow.spacing = 8
-        self.usageRow.heightAnchor.constraint(equalToConstant: 14).isActive = true
-        self.usageRow.addArrangedSubview(self.usageField)
-
-        // Inline VPS global traffic via vnstat; this preserves the existing
-        // utility-card footprint instead of adding a third row.
-        self.vpsField.font = NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .regular)
-        self.vpsField.textColor = Design.secondaryTextColor
-        self.vpsField.lineBreakMode = .byTruncatingTail
-        self.vpsField.alignment = .right
-        self.vpsField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        self.usageRow.addArrangedSubview(self.vpsField)
-        self.addArrangedSubview(self.usageRow)
-
-        let compactHeight = self.headerHeight + 4 + 14 + self.edgeInsets.top + self.edgeInsets.bottom
-        self.heightConstraint = self.heightAnchor.constraint(equalToConstant: compactHeight)
+        self.heightConstraint = self.heightAnchor.constraint(equalToConstant: 144)
         self.heightConstraint?.isActive = true
 
-        // the ledger polls mihomo whether or not the panel is open
         ProxyTrafficLedger.shared.start()
     }
 
@@ -152,65 +101,216 @@ internal class ProxyPortal: NSStackView {
         self.applyCardStyle()
     }
 
-    private var widthConstraint: NSLayoutConstraint?
+    // MARK: - Zone A: Current node
+
+    private func buildZoneA() {
+        let zone = NSStackView()
+        zone.orientation = .vertical
+        zone.alignment = .leading
+        zone.spacing = 6
+        zone.edgeInsets = NSEdgeInsets(top: 0, left: 16, bottom: 0, right: 16)
+
+        let header = NSStackView()
+        header.orientation = .horizontal
+        header.alignment = .centerY
+        header.spacing = 5
+        let globe = NSImageView()
+        globe.image = NSImage(systemSymbolName: "globe", accessibilityDescription: nil)
+        globe.symbolConfiguration = .init(pointSize: 10, weight: .semibold)
+        globe.contentTintColor = .systemTeal
+        globe.setContentHuggingPriority(.required, for: .horizontal)
+        self.titleField.font = Design.labelMediumFont
+        self.titleField.textColor = .labelColor
+        self.modeField.font = NSFont.systemFont(ofSize: 9, weight: .regular)
+        self.modeField.textColor = Design.secondaryTextColor
+        header.addArrangedSubview(globe)
+        header.addArrangedSubview(self.titleField)
+        header.addArrangedSubview(self.modeField)
+        zone.addArrangedSubview(header)
+
+        self.currentField.font = NSFont.systemFont(ofSize: 17, weight: .semibold)
+        self.currentField.lineBreakMode = .byTruncatingTail
+        self.currentField.maximumNumberOfLines = 1
+        self.currentField.cell?.truncatesLastVisibleLine = true
+        zone.addArrangedSubview(self.currentField)
+
+        self.delayChip.setContentHuggingPriority(.required, for: .horizontal)
+        zone.addArrangedSubview(self.delayChip)
+
+        self.switchHint.font = NSFont.systemFont(ofSize: 10, weight: .regular)
+        self.switchHint.textColor = Design.mutedTextColor
+        self.switchHint.stringValue = localizedString("Proxy switch hint")
+        zone.addArrangedSubview(self.switchHint)
+
+        self.sizeColumn(zone, initial: 190)
+        self.addArrangedSubview(zone)
+
+        let divider = NSBox()
+        divider.boxType = .separator
+        divider.widthAnchor.constraint(equalToConstant: 0.5).isActive = true
+        self.addArrangedSubview(divider)
+    }
+
+    // MARK: - Zone B: Top-5 node list
+
+    private func buildZoneB() {
+        let zone = NSStackView()
+        zone.orientation = .vertical
+        zone.alignment = .leading
+        zone.spacing = 6
+        zone.edgeInsets = NSEdgeInsets(top: 0, left: 16, bottom: 0, right: 16)
+
+        let header = NSStackView()
+        header.orientation = .horizontal
+        header.alignment = .centerY
+        header.spacing = 5
+        let label = NSTextField(labelWithString: localizedString("Proxy nodes"))
+        label.font = NSFont.systemFont(ofSize: 10, weight: .semibold)
+        label.textColor = Design.secondaryTextColor
+        header.addArrangedSubview(label)
+        header.addArrangedSubview(NSView())
+        self.chevron.image = NSImage(systemSymbolName: "chevron.down", accessibilityDescription: nil)
+        self.chevron.symbolConfiguration = .init(pointSize: 9, weight: .semibold)
+        self.chevron.contentTintColor = Design.mutedTextColor
+        self.chevron.setContentHuggingPriority(.required, for: .horizontal)
+        let chevronClick = NSClickGestureRecognizer(target: self, action: #selector(self.showNodeMenu))
+        header.addGestureRecognizer(chevronClick)
+        header.addArrangedSubview(self.chevron)
+        zone.addArrangedSubview(header)
+
+        self.nodeList.orientation = .vertical
+        self.nodeList.alignment = .width
+        self.nodeList.spacing = 2
+        zone.addArrangedSubview(self.nodeList)
+
+        // This is the flexible column: distribute surplus width through the
+        // node names instead of leaving a blank area after the list.
+        self.sizeColumn(zone, initial: 320)
+        header.widthAnchor.constraint(equalTo: zone.widthAnchor, constant: -32).isActive = true
+        self.nodeList.widthAnchor.constraint(equalTo: zone.widthAnchor, constant: -32).isActive = true
+        self.addArrangedSubview(zone)
+
+        let divider = NSBox()
+        divider.boxType = .separator
+        divider.widthAnchor.constraint(equalToConstant: 0.5).isActive = true
+        self.addArrangedSubview(divider)
+    }
+
+    // MARK: - Zone C: Speed + node traffic
+
+    private func buildZoneC() {
+        let zone = NSStackView()
+        zone.orientation = .vertical
+        zone.alignment = .leading
+        zone.spacing = 6
+        zone.edgeInsets = NSEdgeInsets(top: 0, left: 16, bottom: 0, right: 16)
+
+        let label = NSTextField(labelWithString: localizedString("Proxy speed"))
+        label.font = NSFont.systemFont(ofSize: 10, weight: .semibold)
+        label.textColor = Design.secondaryTextColor
+        zone.addArrangedSubview(label)
+
+        self.downSpeedField.font = NSFont.monospacedDigitSystemFont(ofSize: 20, weight: .semibold)
+        self.downSpeedField.textColor = .labelColor
+        zone.addArrangedSubview(self.downSpeedField)
+
+        self.upSpeedField.font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular)
+        self.upSpeedField.textColor = Design.secondaryTextColor
+        zone.addArrangedSubview(self.upSpeedField)
+
+        self.nodeTrafficField.font = NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .regular)
+        self.nodeTrafficField.textColor = Design.secondaryTextColor
+        self.nodeTrafficField.lineBreakMode = .byTruncatingTail
+        zone.addArrangedSubview(self.nodeTrafficField)
+
+        self.trafficBar.heightAnchor.constraint(equalToConstant: 3).isActive = true
+        zone.addArrangedSubview(self.trafficBar)
+
+        self.sizeColumn(zone, initial: 250)
+        self.addArrangedSubview(zone)
+
+        let divider = NSBox()
+        divider.boxType = .separator
+        divider.widthAnchor.constraint(equalToConstant: 0.5).isActive = true
+        self.addArrangedSubview(divider)
+    }
+
+    // MARK: - Zone D: VPS + connections
+
+    private func buildZoneD() {
+        let zone = NSStackView()
+        zone.orientation = .vertical
+        zone.alignment = .leading
+        zone.spacing = 6
+        zone.edgeInsets = NSEdgeInsets(top: 0, left: 16, bottom: 0, right: 16)
+
+        let label = NSTextField(labelWithString: localizedString("Proxy server monthly"))
+        label.font = NSFont.systemFont(ofSize: 10, weight: .semibold)
+        label.textColor = Design.secondaryTextColor
+        zone.addArrangedSubview(label)
+
+        self.vpsMonthField.font = NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .semibold)
+        self.vpsMonthField.textColor = .labelColor
+        self.vpsMonthField.lineBreakMode = .byTruncatingTail
+        self.vpsMonthField.maximumNumberOfLines = 1
+        zone.addArrangedSubview(self.vpsMonthField)
+
+        self.vpsDayField.font = NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .regular)
+        self.vpsDayField.textColor = Design.secondaryTextColor
+        self.vpsDayField.lineBreakMode = .byTruncatingTail
+        self.vpsDayField.maximumNumberOfLines = 1
+        zone.addArrangedSubview(self.vpsDayField)
+
+        let connLabel = NSTextField(labelWithString: localizedString("Proxy connections"))
+        connLabel.font = NSFont.systemFont(ofSize: 10, weight: .regular)
+        connLabel.textColor = Design.mutedTextColor
+
+        self.connTotalField.font = NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .semibold)
+        self.connTotalField.textColor = .labelColor
+        let connections = NSStackView(views: [connLabel, self.connTotalField])
+        connections.orientation = .horizontal
+        connections.alignment = .firstBaseline
+        connections.spacing = 8
+        zone.addArrangedSubview(connections)
+
+        self.connDetailField.font = NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .regular)
+        self.connDetailField.textColor = Design.secondaryTextColor
+        self.connDetailField.lineBreakMode = .byTruncatingTail
+        self.connDetailField.maximumNumberOfLines = 1
+        zone.addArrangedSubview(self.connDetailField)
+
+        self.updatedField.font = NSFont.systemFont(ofSize: 8, weight: .regular)
+        self.updatedField.textColor = Design.mutedTextColor
+        zone.addArrangedSubview(self.updatedField)
+
+        self.sizeColumn(zone, initial: 210)
+        self.addArrangedSubview(zone)
+    }
+
+    // MARK: - layout
 
     internal func setWidth(_ width: CGFloat) {
         self.widthConstraint?.isActive = false
         self.widthConstraint = self.widthAnchor.constraint(equalToConstant: width)
         self.widthConstraint?.isActive = true
+        let fractions: [CGFloat] = [0.20, 0.33, 0.26, 0.21]
+        for (constraint, fraction) in zip(self.columnWidths, fractions) {
+            constraint.constant = (width - 1.5) * fraction
+        }
     }
 
-    @objc private func showNodeMenu() {
-        guard !self.nodeNames.isEmpty else { return }
-
-        let menu = NSMenu()
-        menu.autoenablesItems = false
-        self.nodeNames.forEach { name in
-            let item = NSMenuItem(
-                title: self.menuTitle(name: name, delay: self.nodeDelays[name]),
-                action: #selector(self.selectNode(_:)),
-                keyEquivalent: ""
-            )
-            item.target = self
-            item.representedObject = name
-            item.state = name == self.currentNode ? .on : .off
-            item.isEnabled = self.switchable
-            menu.addItem(item)
+    private func sizeColumn(_ column: NSStackView, initial: CGFloat) {
+        let constraint = column.widthAnchor.constraint(equalToConstant: initial)
+        constraint.isActive = true
+        self.columnWidths.append(constraint)
+        // Explicit content widths keep AppKit gravity stacks from drifting.
+        for child in column.arrangedSubviews where !(child is NSBox) {
+            child.translatesAutoresizingMaskIntoConstraints = false
+            child.widthAnchor.constraint(lessThanOrEqualTo: column.widthAnchor, constant: -32).isActive = true
         }
-
-        self.openNodesMenu = menu
-        self.chevron.image = NSImage(systemSymbolName: "chevron.up", accessibilityDescription: nil)
-        if Date().timeIntervalSince(self.allDelaysTestedAt) > self.allDelayCacheInterval {
-            self.testAllDelays()
-        }
-
-        // A real NSMenu tracks in its own surface. Unlike the old inline stack,
-        // it never changes the dashboard's intrinsic height and AppKit flips or
-        // scrolls it automatically when the proxy card is near the screen edge.
-        let selected = menu.items.first(where: { $0.state == .on })
-        let popupWindow = self.window as? PopupWindow
-        popupWindow?.locked = true
-        let didSelect = menu.popUp(
-            positioning: selected,
-            at: NSPoint(x: self.header.bounds.maxX - 18, y: self.header.bounds.minY),
-            in: self.header
-        )
-        popupWindow?.locked = false
-        if didSelect {
-            // Re-arm the parent's resign-key auto-dismiss after menu tracking.
-            popupWindow?.makeKey()
-        } else {
-            // Clicking outside the menu is also an outside click for the panel.
-            popupWindow?.orderOut(nil)
-        }
-        self.openNodesMenu = nil
-        self.chevron.image = NSImage(systemSymbolName: "chevron.down", accessibilityDescription: nil)
     }
 
-    @objc private func selectNode(_ sender: NSMenuItem) {
-        guard let name = sender.representedObject as? String else { return }
-        self.switchNode(name)
-    }
+    // MARK: - lifecycle
 
     internal func start() {
         self.active = true
@@ -259,65 +359,70 @@ internal class ProxyPortal: NSStackView {
     }
 
     private func refreshSpeed() {
-        // the ledger owns the /connections polling; here we only render
         let speed = ProxyTrafficLedger.shared.currentSpeed()
         let usage = ProxyTrafficLedger.shared.usage(node: self.currentNode)
-        let text = "↓ \(Units(bytes: speed.down).getReadableSpeed())  ↑ \(Units(bytes: speed.up).getReadableSpeed())"
-        let usageText = localizedString("Proxy month usage")
-            .replacingOccurrences(of: "%0", with: Units(bytes: usage.0).getReadableMemory())
-            .replacingOccurrences(of: "%1", with: Units(bytes: usage.1).getReadableMemory())
-            .replacingOccurrences(of: "%2", with: Units(bytes: usage.2).getReadableMemory())
-            .replacingOccurrences(of: "%3", with: Units(bytes: usage.3).getReadableMemory())
-        let compactUsageText = localizedString("Proxy compact usage")
-            .replacingOccurrences(of: "%0", with: Units(bytes: usage.0).getReadableMemory())
-            .replacingOccurrences(of: "%1", with: Units(bytes: usage.1).getReadableMemory())
-
-        // Fixed hkvps/ens17 global interface traffic. This is intentionally
-        // separate from the selected mihomo node's proxy-only ledger above.
+        let conns = ProxyTrafficLedger.shared.connectionCount()
         let vps = ProxyRemoteTraffic.shared.snapshot()
-        let vpsText: String
-        let compactVpsText: String
+
+        let downText = "↓ \(Units(bytes: speed.down).getReadableSpeed())"
+        let upText = "↑ \(Units(bytes: speed.up).getReadableSpeed())"
+        let monthNode = Units(bytes: usage.0 + usage.1).getReadableMemory()
+        let todayNode = Units(bytes: usage.2 + usage.3).getReadableMemory()
+        let trafficText = localizedString("Proxy node traffic")
+            .replacingOccurrences(of: "%0", with: monthNode)
+            .replacingOccurrences(of: "%1", with: todayNode)
+
+        let vpsMonthText: String
+        let vpsDayText: String
+        let vpsLive: Bool
         if vps.totalsState != .live {
             let key: String
-            if vps.totalsState == .loading {
-                key = "VPS traffic loading"
-            } else if vps.totalsState == .stale {
-                key = "VPS traffic stale"
-            } else {
-                key = "VPS traffic unavailable"
-            }
-            vpsText = localizedString(key)
-            compactVpsText = vpsText
+            if vps.totalsState == .loading { key = "VPS traffic loading" }
+            else if vps.totalsState == .stale { key = "VPS traffic stale" }
+            else { key = "VPS traffic unavailable" }
+            vpsMonthText = localizedString(key)
+            vpsDayText = ""
+            vpsLive = false
         } else {
-            let monthTotal = vps.monthRx + vps.monthTx
-            let dayTotal = vps.dayRx + vps.dayTx
-            // RX/TX are retained in the tooltip for auditability. The compact
-            // surface shows the total that can be compared directly with a
-            // monthly VPS allowance.
-            vpsText = localizedString("VPS traffic")
-                .replacingOccurrences(of: "%0", with: Units(bytes: monthTotal).getReadableMemory())
-                .replacingOccurrences(of: "%1", with: Units(bytes: vps.monthRx).getReadableMemory())
-                .replacingOccurrences(of: "%2", with: Units(bytes: vps.monthTx).getReadableMemory())
-                .replacingOccurrences(of: "%3", with: Units(bytes: dayTotal).getReadableMemory())
-                .replacingOccurrences(of: "%4", with: Units(bytes: vps.dayRx).getReadableMemory())
-                .replacingOccurrences(of: "%5", with: Units(bytes: vps.dayTx).getReadableMemory())
-            compactVpsText = localizedString("VPS compact traffic")
-                .replacingOccurrences(of: "%0", with: Units(bytes: monthTotal).getReadableMemory())
+            vpsMonthText = "\(Units(bytes: vps.monthRx + vps.monthTx).getReadableMemory())"
+            vpsDayText = localizedString("Proxy VPS day", Units(bytes: vps.dayRx + vps.dayTx).getReadableMemory())
+            vpsLive = true
         }
-        self.usageField.toolTip = usageText
-        self.vpsField.toolTip = vpsText
+
+        let connTotal = "\(conns.total)"
+        let connDetail = localizedString("Proxy conn detail")
+            .replacingOccurrences(of: "%0", with: "\(conns.direct)")
+            .replacingOccurrences(of: "%1", with: "\(conns.proxied)")
+
+        let now = Date()
+        let fmt = DateFormatter()
+        fmt.dateFormat = "HH:mm"
+        let updated = localizedString("Proxy updated", fmt.string(from: now))
+
+        // traffic bar: today vs month ratio
+        let monthBytes = usage.0 + usage.1
+        let todayBytes = usage.2 + usage.3
+        let ratio = monthBytes > 0 ? min(Double(todayBytes) / Double(monthBytes), 1.0) : 0
 
         DispatchQueue.main.async {
-            self.speedField.stringValue = text
-            self.usageField.stringValue = compactUsageText
-            self.vpsField.stringValue = compactVpsText
+            self.downSpeedField.stringValue = downText
+            self.upSpeedField.stringValue = upText
+            self.nodeTrafficField.stringValue = trafficText
+            self.trafficBar.set(fraction: ratio)
+            self.vpsMonthField.stringValue = vpsMonthText
+            self.vpsMonthField.font = NSFont.monospacedDigitSystemFont(ofSize: vpsLive ? 13 : 9, weight: vpsLive ? .semibold : .regular)
+            self.vpsMonthField.textColor = vpsLive ? .labelColor : Design.mutedTextColor
+            self.vpsDayField.stringValue = vpsDayText
+            self.connTotalField.stringValue = connTotal
+            self.connDetailField.stringValue = connDetail
+            self.updatedField.stringValue = updated
         }
     }
 
     private func refreshState() {
         self.get("/configs") { [weak self] json in
             guard let self = self, let mode = json?["mode"] as? String else { return }
-            DispatchQueue.main.async { self.modeField.stringValue = mode }
+            DispatchQueue.main.async { self.modeField.stringValue = localizedString("Proxy mode " + mode.lowercased()) }
         }
 
         self.get("/proxies") { [weak self] json in
@@ -337,40 +442,17 @@ internal class ProxyPortal: NSStackView {
                 self.currentNode = now
                 self.groupName = name
                 self.switchable = switchable
-                self.titleField.stringValue = localizedString("Proxy") + (name.isEmpty ? "" : " · \(name)")
+                self.titleField.stringValue = localizedString("Proxy overview title")
                 self.currentField.stringValue = now
                 self.rebuildNodes(all)
+                self.refreshInlineNodeRows()
             }
 
-            // only test the current node on each 30 s refresh; the full list
-            // is tested lazily when the user expands the node list.
             if !now.isEmpty { self.testDelay(now) }
-        }
-    }
-
-    /// Test all node delays in bounded batches (max 5 concurrent) to avoid
-    /// hammering the proxy controller and the network when there are many nodes.
-    private func testAllDelays() {
-        let names = self.nodeNames
-        guard !names.isEmpty else { return }
-        self.allDelaysTestedAt = Date()
-        let batchSize = 5
-        var index = 0
-        func nextBatch() {
-            let end = min(index + batchSize, names.count)
-            guard index < end else { return }
-            let group = DispatchGroup()
-            for i in index..<end {
-                group.enter()
-                let name = names[i]
-                self.testDelay(name) { group.leave() }
-            }
-            group.notify(queue: .global(qos: .utility)) {
-                index = end
-                if index < names.count { nextBatch() }
+            if Date().timeIntervalSince(self.allDelaysTestedAt) > self.allDelayCacheInterval {
+                self.testAllDelays()
             }
         }
-        nextBatch()
     }
 
     // pick the switchable selector group to control: a manual (Selector) group with the
@@ -415,6 +497,126 @@ internal class ProxyPortal: NSStackView {
         }.resume()
     }
 
+    // MARK: - node list (inline + menu)
+
+    private func rebuildNodes(_ names: [String]) {
+        self.nodeNames = names
+        let validNames = Set(names)
+        self.nodeDelays = self.nodeDelays.filter { validNames.contains($0.key) }
+    }
+
+    private func refreshInlineNodeRows() {
+        self.nodeList.subviews.forEach { $0.removeFromSuperview() }
+        self.nodeRows = []
+
+        // Top-5 by delay (known delays first, sorted ascending; unknowns after, in list order)
+        let withDelays = self.nodeNames.compactMap { name -> (String, Int)? in
+            guard let d = self.nodeDelays[name] else { return nil }
+            return (name, d)
+        }.sorted { $0.1 > 0 && $1.1 > 0 ? $0.1 < $1.1 : $0.1 > 0 }
+
+        let withoutDelays = self.nodeNames.filter { self.nodeDelays[$0] == nil }
+        let ordered = (withDelays.map { $0.0 } + withoutDelays)
+        let top5 = Array(ordered.prefix(5))
+
+        for name in top5 {
+            let row = ProxyNodeRow(name: name, isCurrent: name == self.currentNode)
+            let delay = self.nodeDelays[name]
+            let usage = ProxyTrafficLedger.shared.usage(node: name)
+            let monthDown = Units(bytes: usage.1).getReadableMemory()
+            row.update(delay: delay, monthTraffic: monthDown)
+            let click = NSClickGestureRecognizer(target: self, action: #selector(self.switchViaRow(_:)))
+            row.addGestureRecognizer(click)
+            self.nodeList.addArrangedSubview(row)
+            row.translatesAutoresizingMaskIntoConstraints = false
+            row.widthAnchor.constraint(equalTo: self.nodeList.widthAnchor).isActive = true
+            self.nodeRows.append(row)
+        }
+        if top5.isEmpty {
+            let empty = NSTextField(labelWithString: "—")
+            empty.font = Design.subFont
+            empty.textColor = Design.mutedTextColor
+            self.nodeList.addArrangedSubview(empty)
+        }
+    }
+
+    @objc private func switchViaRow(_ sender: NSClickGestureRecognizer) {
+        guard let row = sender.view as? ProxyNodeRow else { return }
+        self.switchNode(row.name)
+    }
+
+    @objc private func showNodeMenu() {
+        guard !self.nodeNames.isEmpty else { return }
+
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        self.nodeNames.forEach { name in
+            let item = NSMenuItem(
+                title: self.menuTitle(name: name, delay: self.nodeDelays[name]),
+                action: #selector(self.selectNode(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.representedObject = name
+            item.state = name == self.currentNode ? .on : .off
+            item.isEnabled = self.switchable
+            menu.addItem(item)
+        }
+
+        self.openNodesMenu = menu
+        self.chevron.image = NSImage(systemSymbolName: "chevron.up", accessibilityDescription: nil)
+        if Date().timeIntervalSince(self.allDelaysTestedAt) > self.allDelayCacheInterval {
+            self.testAllDelays()
+        }
+
+        let selected = menu.items.first(where: { $0.state == .on })
+        let popupWindow = self.window as? PopupWindow
+        popupWindow?.locked = true
+        let didSelect = menu.popUp(
+            positioning: selected,
+            at: NSPoint(x: self.chevron.bounds.maxX, y: self.chevron.bounds.minY),
+            in: self.chevron
+        )
+        popupWindow?.locked = false
+        if didSelect {
+            popupWindow?.makeKey()
+        } else {
+            popupWindow?.orderOut(nil)
+        }
+        self.openNodesMenu = nil
+        self.chevron.image = NSImage(systemSymbolName: "chevron.down", accessibilityDescription: nil)
+    }
+
+    @objc private func selectNode(_ sender: NSMenuItem) {
+        guard let name = sender.representedObject as? String else { return }
+        self.switchNode(name)
+    }
+
+    // MARK: - delay testing
+
+    private func testAllDelays() {
+        let names = self.nodeNames
+        guard !names.isEmpty else { return }
+        self.allDelaysTestedAt = Date()
+        let batchSize = 5
+        var index = 0
+        func nextBatch() {
+            let end = min(index + batchSize, names.count)
+            guard index < end else { return }
+            let group = DispatchGroup()
+            for i in index..<end {
+                group.enter()
+                let name = names[i]
+                self.testDelay(name) { group.leave() }
+            }
+            group.notify(queue: .global(qos: .utility)) {
+                index = end
+                if index < names.count { nextBatch() }
+            }
+        }
+        nextBatch()
+    }
+
     private func testDelay(_ name: String, _ completion: (() -> Void)? = nil) {
         guard let encoded = name.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
               let url = URL(string: self.base + "/proxies/\(encoded)/delay?url=http://www.gstatic.com/generate_204&timeout=5000") else {
@@ -436,20 +638,14 @@ internal class ProxyPortal: NSStackView {
                 }
                 if name == self.currentNode {
                     let style = self.delayStyle(delay)
-                    self.currentDelayField.stringValue = style.text
-                    self.currentDelayField.textColor = style.color
+                    self.delayChip.set(text: style.text, color: style.color)
                 }
+                self.refreshInlineNodeRows()
             }
         }.resume()
     }
 
-    // MARK: - layout
-
-    private func rebuildNodes(_ names: [String]) {
-        self.nodeNames = names
-        let validNames = Set(names)
-        self.nodeDelays = self.nodeDelays.filter { validNames.contains($0.key) }
-    }
+    // MARK: - helpers
 
     private func menuTitle(name: String, delay: Int?) -> String {
         guard let delay = delay else { return name }
@@ -468,5 +664,200 @@ internal class ProxyPortal: NSStackView {
             self.reachable = state
             self.onResize?()
         }
+    }
+}
+
+// MARK: - Delay chip
+
+private class DelayChip: NSView {
+    private var text: String = "—"
+    private var color: NSColor = Design.mutedTextColor
+
+    func set(text: String, color: NSColor) {
+        self.text = text
+        self.color = color
+        self.needsDisplay = true
+    }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        self.wantsLayer = true
+        self.widthAnchor.constraint(equalToConstant: 50).isActive = true
+        self.heightAnchor.constraint(equalToConstant: 16).isActive = true
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func updateLayer() {
+        self.layer?.backgroundColor = self.color.withAlphaComponent(0.15).cgColor
+        self.layer?.cornerRadius = 4
+    }
+
+    override func viewDidMoveToSuperview() {
+        super.viewDidMoveToSuperview()
+        self.layer?.backgroundColor = self.color.withAlphaComponent(0.15).cgColor
+        self.layer?.cornerRadius = 4
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let style = NSMutableParagraphStyle()
+        style.alignment = .center
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .semibold),
+            .foregroundColor: self.color,
+            .paragraphStyle: style
+        ]
+        let str = NSAttributedString(string: self.text, attributes: attrs)
+        let size = str.size()
+        let origin = NSPoint(x: (self.bounds.width - size.width) / 2, y: (self.bounds.height - size.height) / 2)
+        str.draw(at: origin)
+    }
+}
+
+// MARK: - Inline node row
+
+private class ProxyNodeRow: NSStackView {
+    let name: String
+    private let indicator = NSTextField(labelWithString: "○")
+    private let nameField = NSTextField(labelWithString: "")
+    private let delayBar = NSView()
+    private let delayBarFill = NSView()
+    private let delayField = NSTextField(labelWithString: "")
+    private let trafficField = NSTextField(labelWithString: "")
+    private var delayBarWidth: NSLayoutConstraint?
+
+    init(name: String, isCurrent: Bool) {
+        self.name = name
+        super.init(frame: .zero)
+
+        self.orientation = .horizontal
+        self.alignment = .centerY
+        self.spacing = 4
+        self.distribution = .fill
+
+        self.indicator.font = NSFont.systemFont(ofSize: 8, weight: .medium)
+        self.indicator.textColor = isCurrent ? .systemTeal : Design.mutedTextColor
+        self.indicator.stringValue = isCurrent ? "●" : "○"
+        self.indicator.setContentHuggingPriority(.required, for: .horizontal)
+        self.indicator.widthAnchor.constraint(equalToConstant: 8).isActive = true
+
+        self.nameField.font = NSFont.systemFont(ofSize: 9, weight: isCurrent ? .semibold : .regular)
+        self.nameField.textColor = isCurrent ? .labelColor : Design.secondaryTextColor
+        self.nameField.lineBreakMode = .byTruncatingTail
+        self.nameField.cell?.truncatesLastVisibleLine = true
+        self.nameField.setContentHuggingPriority(.defaultLow, for: .horizontal)
+
+        self.delayBar.wantsLayer = true
+        self.delayBar.layer?.backgroundColor = Design.track.cgColor
+        self.delayBar.layer?.cornerRadius = 1.5
+        self.delayBar.widthAnchor.constraint(equalToConstant: 50).isActive = true
+        self.delayBar.heightAnchor.constraint(equalToConstant: 3).isActive = true
+        self.delayBarFill.wantsLayer = true
+        self.delayBarFill.layer?.cornerRadius = 1.5
+        self.delayBar.addSubview(self.delayBarFill)
+        self.delayBarFill.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            self.delayBarFill.leadingAnchor.constraint(equalTo: self.delayBar.leadingAnchor),
+            self.delayBarFill.centerYAnchor.constraint(equalTo: self.delayBar.centerYAnchor),
+            self.delayBarFill.heightAnchor.constraint(equalTo: self.delayBar.heightAnchor),
+        ])
+        self.delayBarWidth = self.delayBarFill.widthAnchor.constraint(equalToConstant: 0)
+        self.delayBarWidth?.isActive = true
+
+        self.delayField.font = NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .regular)
+        self.delayField.textColor = Design.mutedTextColor
+        self.delayField.alignment = .right
+        self.delayField.widthAnchor.constraint(equalToConstant: 44).isActive = true
+        self.delayField.setContentHuggingPriority(.required, for: .horizontal)
+
+        self.trafficField.font = NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .regular)
+        self.trafficField.textColor = Design.mutedTextColor
+        self.trafficField.alignment = .right
+        self.trafficField.widthAnchor.constraint(equalToConstant: 54).isActive = true
+        self.trafficField.setContentHuggingPriority(.required, for: .horizontal)
+
+        self.addArrangedSubview(self.indicator)
+        self.addArrangedSubview(self.nameField)
+        self.addArrangedSubview(self.delayBar)
+        self.addArrangedSubview(self.delayField)
+        self.addArrangedSubview(self.trafficField)
+
+        self.nameField.stringValue = name
+        self.heightAnchor.constraint(equalToConstant: 18).isActive = true
+
+        if isCurrent {
+            self.wantsLayer = true
+            self.layer?.backgroundColor = NSColor.systemTeal.withAlphaComponent(0.08).cgColor
+            self.layer?.cornerRadius = 3
+        }
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    func update(delay: Int?, monthTraffic: String) {
+        if let delay = delay {
+            if delay <= 0 {
+                self.delayField.stringValue = "timeout"
+                self.delayField.textColor = .systemRed
+                self.delayBarFill.layer?.backgroundColor = NSColor.systemRed.cgColor
+                self.delayBarWidth?.constant = 50
+            } else {
+                self.delayField.stringValue = "\(delay)ms"
+                if delay < 100 {
+                    self.delayField.textColor = .systemGreen
+                    self.delayBarFill.layer?.backgroundColor = NSColor.systemGreen.cgColor
+                } else if delay < 400 {
+                    self.delayField.textColor = Design.secondaryTextColor
+                    self.delayBarFill.layer?.backgroundColor = Design.secondaryTextColor.cgColor
+                } else {
+                    self.delayField.textColor = .systemOrange
+                    self.delayBarFill.layer?.backgroundColor = NSColor.systemOrange.cgColor
+                }
+                self.delayBarWidth?.constant = max(3, min(50, CGFloat(delay) / 10))
+            }
+        } else {
+            self.delayField.stringValue = "—"
+            self.delayField.textColor = Design.mutedTextColor
+            self.delayBarFill.layer?.backgroundColor = Design.track.cgColor
+            self.delayBarWidth?.constant = 0
+        }
+        self.trafficField.stringValue = "↓\(monthTraffic)"
+    }
+}
+
+// MARK: - Traffic bar
+
+private class TrafficBar: NSView {
+    private var fraction: CGFloat = 0
+
+    func set(fraction: Double) {
+        self.fraction = CGFloat(max(0, min(fraction, 1)))
+        self.needsDisplay = true
+    }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        self.wantsLayer = true
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let radius = self.bounds.height / 2
+        let track = NSBezierPath(roundedRect: self.bounds, xRadius: radius, yRadius: radius)
+        Design.track.setFill()
+        track.fill()
+
+        guard self.fraction > 0 else { return }
+        let w = max(self.bounds.width * self.fraction, self.bounds.height)
+        let fill = NSBezierPath(roundedRect: NSRect(x: 0, y: 0, width: w, height: self.bounds.height), xRadius: radius, yRadius: radius)
+        NSColor.systemTeal.setFill()
+        fill.fill()
     }
 }

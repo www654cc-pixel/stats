@@ -59,6 +59,15 @@ internal class CombinedView: NSObject, NSGestureRecognizerDelegate {
             self?.popupVisible = state
             if !state {
                 self?.refreshPowerIcon()
+                // debug capture mode: the panel closes as soon as the
+                // shell-launched agent resigns key, so keep re-opening it
+                // while the flag is active
+                if CommandLine.arguments.contains("--debug-open-popup") {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+                        guard let self, !(self.popup?.isVisible ?? false), let button = self.menuBarItem?.button else { return }
+                        self.togglePopup(button)
+                    }
+                }
             }
         }
         
@@ -88,6 +97,17 @@ internal class CombinedView: NSObject, NSGestureRecognizerDelegate {
             self.menuBarItem?.autosaveName = "CombinedModules"
         })
         self.menuBarItem?.button?.toolTip = localizedString("Combined modules")
+
+        // debug/CI helper: `Stats --debug-open-popup` opens the combined
+        // overview right after launch so it can be captured headlessly
+        // (screencapture -l) without Accessibility-driven clicks. Must run in
+        // BOTH modes — single-icon mode returns early below.
+        if CommandLine.arguments.contains("--debug-open-popup") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in
+                guard let self, let button = self.menuBarItem?.button else { return }
+                self.togglePopup(button)
+            }
+        }
 
         // single icon mode: show a live power mini-widget when Sensors is enabled,
         // otherwise fall back to the fixed gauge icon.
@@ -370,8 +390,8 @@ private class Popup: NSStackView, Popup_p {
     private let tiles: MetricTilesGrid = MetricTilesGrid()
     private let calendar: CalendarPortal = CalendarPortal()
     private let proxy: ProxyPortal = ProxyPortal()
-    private let launcher: LauncherPortal = LauncherPortal()
     private let infoStrip: InfoStrip = InfoStrip()
+    private let clockCard: ClockCard = ClockCard()
     private var refreshTimer: Timer?
 
     init() {
@@ -390,10 +410,6 @@ private class Popup: NSStackView, Popup_p {
         self.proxy.onResize = { [weak self] in
             guard let self = self else { return }
             self.proxy.isHidden = !self.proxy.reachable
-            self.recomputeHeight()
-        }
-        self.launcher.onResize = { [weak self] in
-            guard let self = self else { return }
             self.recomputeHeight()
         }
 
@@ -417,11 +433,13 @@ private class Popup: NSStackView, Popup_p {
         self.calendar.refresh()
         self.infoStrip.requestQuotaRefresh()
         self.infoStrip.refresh()
+        self.clockCard.refresh()
         self.refreshTimer?.invalidate()
         self.refreshTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             self?.tiles.refresh()
             self?.calendar.refresh()
             self?.infoStrip.refresh()
+            self?.clockCard.refresh()
         }
         self.power.start()
         self.proxy.start()
@@ -445,8 +463,6 @@ private class Popup: NSStackView, Popup_p {
         self.subviews.forEach({ $0.removeFromSuperview() })
 
         let spacing = Design.gap
-        // dashboard (single icon) mode gets the wide three-column layout,
-        // the classic combined popup a narrower two-column one
         let dashboard = Store.shared.bool(key: "CombinedModules_icon", defaultValue: false)
         let columns = dashboard ? 3 : 2
         let columnWidth: CGFloat = dashboard ? 316 : Constants.Popup.width
@@ -454,109 +470,134 @@ private class Popup: NSStackView, Popup_p {
 
         self.spacing = spacing
 
-        // power hero card on top
-        self.power.setWidth(width)
-        self.power.isHidden = !self.power.available
-        self.addArrangedSubview(self.power)
-
-        // metric tile grid — cards float on the glass, no divider needed
-        self.tiles.rebuild(width: width)
-        if !self.tiles.isEmpty {
-            self.tiles.refresh()
-            self.addArrangedSubview(self.tiles)
-        }
-
-        // stock portals only for modules the unified cards don't cover
-        // (e.g. Bluetooth). Quota is rendered as its own compact strip below,
-        // so it is excluded from this grid.
-        let fallback: [Portal_p] = modules
-            .filter({ $0.enabled && $0.portal != nil && !Popup.coveredModules.contains($0.name) && $0.name != "Quota" })
-            .compactMap({ $0.portal })
-        if !fallback.isEmpty {
-            let grid = NSGridView()
-            grid.rowSpacing = spacing
-            grid.columnSpacing = spacing
-            var row: [NSView] = []
-            fallback.forEach { p in
-                row.append(p)
-                if row.count == columns {
-                    grid.addRow(with: row)
-                    row = []
-                }
-            }
-            if !row.isEmpty {
-                while row.count < columns { row.append(NSView()) }
-                grid.addRow(with: row)
-            }
-            for i in 0..<columns {
-                grid.column(at: i).width = (width - CGFloat(columns - 1) * spacing) / CGFloat(columns)
-                grid.column(at: i).xPlacement = .fill
-            }
-            for r in 0..<grid.numberOfRows {
-                grid.row(at: r).height = Constants.Popup.portalHeight
-                grid.row(at: r).yPlacement = .fill
-            }
-            self.addArrangedSubview(grid)
-        }
-
-        // merged info strip: Quota (Kimi/Codex) + world clocks in one card
+        // Quota + clock bindings
         if let q = modules.first(where: { $0.name == "Quota" && $0.enabled })?.portal as? CombinedQuotaPortal {
             self.infoStrip.bindQuota(q)
         } else {
             self.infoStrip.unbindQuota()
         }
+        if let c = modules.first(where: { $0.name == "Clock" && $0.enabled })?.portal as? CombinedClockPortal {
+            self.clockCard.bind(c)
+        }
         self.infoStrip.refresh()
+        self.clockCard.refresh()
 
-        // The wide dashboard gives the calendar enough room for seven relaxed
-        // columns, then uses the remaining ~38% for quota countdowns and clocks.
-        // Those values need more horizontal room than the calendar's empty air.
         if dashboard {
-            let sidebarWidth: CGFloat = 360
-            let calendarWidth = width - sidebarWidth - spacing
-            // The context rail is two independent Bento cards (quota + clocks).
-            // A little more height lets both cards breathe while preserving the
-            // calendar's wide 2:1 balance.
-            let contextHeight: CGFloat = 288
-            self.calendar.setSize(width: calendarWidth, height: contextHeight)
-            self.infoStrip.setWidth(sidebarWidth, sidebar: true, height: contextHeight)
-            self.calendar.refresh()
+            // Row 1: PowerFlow (62%) + ClockCard (38%) — horizontal NSStackView,
+            // NOT NSGridView, because every child portal already carries its own
+            // active width + height constraints; nesting another grid fights them.
+            self.power.setWidth(width * 0.62 - spacing)
+            self.power.isHidden = !self.power.available
+            self.clockCard.setWidth(width * 0.38)
+            let row1 = NSStackView()
+            row1.orientation = .horizontal
+            row1.spacing = spacing
+            row1.addArrangedSubview(self.power)
+            row1.addArrangedSubview(self.clockCard)
+            self.addArrangedSubview(row1)
 
-            let context = NSGridView(views: [[self.calendar, self.infoStrip]])
-            context.columnSpacing = spacing
-            context.rowSpacing = 0
-            context.column(at: 0).width = calendarWidth
-            context.column(at: 1).width = sidebarWidth
-            context.column(at: 0).xPlacement = .fill
-            context.column(at: 1).xPlacement = .fill
-            context.row(at: 0).height = contextHeight
-            context.row(at: 0).yPlacement = .fill
-            self.addArrangedSubview(context)
+            // Row 2: 6 metric tiles in one row
+            self.tiles.rebuild(width: width)
+            if !self.tiles.isEmpty {
+                self.tiles.refresh()
+                self.addArrangedSubview(self.tiles)
+            }
+
+            // Row 3: Calendar (44%) + remaining quotas (56%) — a plain
+            // horizontal stack with proportional widths, no grid. The calendar
+            // height follows its content (header + weekday row + 6×22pt day
+            // rows + footer ≈ 240pt): a hard-coded 125pt used to crush the
+            // grid rows to 4pt and stack-print day numbers on top of each other.
+            let calW = (width - spacing) * 0.44
+            let quotaW = width - spacing - calW
+            self.calendar.setSize(width: calW, height: nil)
+            self.calendar.refresh()
+            self.layoutSubtreeIfNeeded()
+            let contextHeight = max(self.calendar.fittingSize.height, 268)
+            self.calendar.setSize(width: calW, height: contextHeight)
+            self.infoStrip.setWidth(quotaW, sidebar: true, height: contextHeight, clockVisible: false)
+            let row3 = NSStackView()
+            row3.orientation = .horizontal
+            row3.spacing = spacing
+            row3.addArrangedSubview(self.calendar)
+            row3.addArrangedSubview(self.infoStrip)
+            self.addArrangedSubview(row3)
+
+            // Row 4: Full-width Proxy
+            self.proxy.setWidth(width)
+            self.proxy.isHidden = !self.proxy.reachable
+            self.addArrangedSubview(self.proxy)
         } else {
-            self.infoStrip.setWidth(width, sidebar: false, height: InfoStrip.compactHeight)
+            // Classic (non-dashboard) layout: keep the original compact arrangement
+            self.power.setWidth(width)
+            self.power.isHidden = !self.power.available
+            self.addArrangedSubview(self.power)
+
+            self.tiles.rebuild(width: width)
+            if !self.tiles.isEmpty {
+                self.tiles.refresh()
+                self.addArrangedSubview(self.tiles)
+            }
+
+            let fallback: [Portal_p] = modules
+                .filter({ $0.enabled && $0.portal != nil && !Popup.coveredModules.contains($0.name) && $0.name != "Quota" })
+                .compactMap({ $0.portal })
+            if !fallback.isEmpty {
+                let grid = NSGridView()
+                grid.rowSpacing = spacing
+                grid.columnSpacing = spacing
+                var row: [NSView] = []
+                fallback.forEach { p in
+                    row.append(p)
+                    if row.count == columns {
+                        grid.addRow(with: row)
+                        row = []
+                    }
+                }
+                if !row.isEmpty {
+                    while row.count < columns { row.append(NSView()) }
+                    grid.addRow(with: row)
+                }
+                for i in 0..<columns {
+                    grid.column(at: i).width = (width - CGFloat(columns - 1) * spacing) / CGFloat(columns)
+                    grid.column(at: i).xPlacement = .fill
+                }
+                for r in 0..<grid.numberOfRows {
+                    grid.row(at: r).height = Constants.Popup.portalHeight
+                    grid.row(at: r).yPlacement = .fill
+                }
+                self.addArrangedSubview(grid)
+            }
+
+            self.infoStrip.setWidth(width, sidebar: false, height: InfoStrip.compactHeight, clockVisible: true)
             self.addArrangedSubview(self.infoStrip)
             self.calendar.setSize(width: width, height: nil)
             self.calendar.refresh()
             self.addArrangedSubview(self.calendar)
+
+            self.proxy.setWidth(width)
+            self.proxy.isHidden = !self.proxy.reachable
+            self.addArrangedSubview(self.proxy)
         }
 
-        // Compact utilities close the composition as one asymmetric row
-        // instead of two full-width tails with large empty regions.
-        let proxyWidth = (width - spacing) * 0.62
-        let launcherWidth = width - spacing - proxyWidth
-        self.proxy.setWidth(proxyWidth)
-        self.proxy.isHidden = !self.proxy.reachable
-        self.launcher.setWidth(launcherWidth)
-        let utilities = NSGridView(views: [[self.proxy, self.launcher]])
-        utilities.columnSpacing = spacing
-        utilities.rowSpacing = 0
-        utilities.column(at: 0).width = proxyWidth
-        utilities.column(at: 1).width = launcherWidth
-        utilities.column(at: 0).xPlacement = .fill
-        utilities.column(at: 1).xPlacement = .fill
-        utilities.row(at: 0).yPlacement = .fill
-        self.addArrangedSubview(utilities)
-
         self.applySize(width: width)
+
+        // Capture layout diagnostics only for an explicit preview run.
+        guard CommandLine.arguments.contains("--debug-open-popup") else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+            guard let self else { return }
+            self.layoutSubtreeIfNeeded()
+            func visit(_ v: NSView, depth: Int) -> String {
+                let indent = String(repeating: "  ", count: depth)
+                let f = v.frame
+                let hidden = v.isHidden ? " [HIDDEN]" : ""
+                let cls = String(describing: type(of: v))
+                var s = "\(indent)\(cls) frame=(\(Int(f.origin.x)),\(Int(f.origin.y)),\(Int(f.size.width))x\(Int(f.size.height)))\(hidden)\n"
+                for sub in v.subviews { s += visit(sub, depth: depth + 1) }
+                return s
+            }
+            try? visit(self, depth: 0).write(toFile: "/tmp/stats_hierarchy.txt", atomically: true, encoding: .utf8)
+        }
     }
 
     // size the stack to its real (constraint-driven) height so nothing gets compressed
@@ -586,14 +627,20 @@ private class InfoStrip: NSStackView {
 
     private var quotaSource: CombinedQuotaPortal?
     private var providerRows: [QuotaProviderRow] = []
+    private var quotaGroups: [QuotaGroupView] = []
+    private var groupedBox: NSStackView?
     private var quotaBox: NSStackView?
     private var quotaSection: NSStackView?
     private var quotaHeader: NSView?
     private var quotaColumnHeader: NSStackView?
     private var quotaWidthConstraint: NSLayoutConstraint?
+    private var groupedWidths: [NSLayoutConstraint] = []
     private var clockWidthConstraint: NSLayoutConstraint?
     private var heightConstraint: NSLayoutConstraint?
     private var sidebarMode: Bool = false
+    // when false, the clock section is suppressed entirely (dashboard mode
+    // renders clocks in a dedicated ClockCard beside the PowerFlow hero)
+    private var clockVisible: Bool = true
 
     private var clockEntries: [(name: NSTextField, time: NSTextField, delta: NSTextField)] = []
     private var clockNames: [String] = []
@@ -627,16 +674,22 @@ private class InfoStrip: NSStackView {
         quotaHeader.orientation = .horizontal
         quotaHeader.alignment = .centerY
         quotaHeader.spacing = 5
+        quotaHeader.heightAnchor.constraint(equalToConstant: 18).isActive = true
+        quotaHeader.setContentCompressionResistancePriority(.required, for: .vertical)
         let quotaIcon = NSImageView()
         quotaIcon.image = NSImage(systemSymbolName: "gauge.with.dots.needle.33percent", accessibilityDescription: nil)
         quotaIcon.symbolConfiguration = .init(pointSize: 10, weight: .semibold)
         quotaIcon.contentTintColor = .systemGreen
-        let quotaLabel = NSTextField(labelWithString: localizedString("Quota"))
+        let quotaLabel = NSTextField(labelWithString: localizedString("Overview remaining quota"))
         quotaLabel.font = .systemFont(ofSize: 11, weight: .semibold)
         quotaLabel.textColor = Design.secondaryTextColor
         quotaHeader.addArrangedSubview(quotaIcon)
         quotaHeader.addArrangedSubview(quotaLabel)
         quotaHeader.addArrangedSubview(NSView())
+        let resetLabel = NSTextField(labelWithString: localizedString("Overview quota reset"))
+        resetLabel.font = Design.subFont
+        resetLabel.textColor = Design.mutedTextColor
+        quotaHeader.addArrangedSubview(resetLabel)
         quotaSection.addArrangedSubview(quotaHeader)
 
         // The progress bars are a three-window comparison, rather than three
@@ -685,6 +738,32 @@ private class InfoStrip: NSStackView {
             q.addArrangedSubview(row)
         }
         quotaSection.addArrangedSubview(q)
+        // Dashboard (sidebar) layout: grouped by provider, one line per real
+        // window. Kimi/Codex report two windows, Go three — no empty tracks.
+        let grouped = NSStackView()
+        grouped.orientation = .vertical
+        grouped.alignment = .width
+        grouped.distribution = .fill
+        grouped.spacing = 8
+        let windowTitles = [
+            localizedString("Quota window short"),
+            localizedString("Quota window week"),
+            localizedString("Quota window month")
+        ]
+        for provider in QuotaProvider.allCases {
+            let titles = provider == .openCode ? windowTitles : Array(windowTitles.prefix(2))
+            let group = QuotaGroupView(providerLabel: provider.label, windowTitles: titles)
+            self.quotaGroups.append(group)
+            grouped.addArrangedSubview(group)
+        }
+        grouped.isHidden = true
+        quotaSection.addArrangedSubview(grouped)
+        self.groupedBox = grouped
+
+        // tall sidebar mode: let the leftover height pool at the bottom instead
+        // of stretching a random internal view (distribution .fill otherwise
+        // inflates the last arranged subview)
+        quotaSection.addArrangedSubview(NSView())
         quotaColumnHeader.widthAnchor.constraint(equalTo: q.widthAnchor).isActive = true
         self.addArrangedSubview(quotaSection)
         self.quotaBox = q
@@ -720,15 +799,20 @@ private class InfoStrip: NSStackView {
     // set after the strip is in the popup tree and its width is known; using a
     // constant (not a multiplier on self.widthAnchor) avoids the mutually-
     // exclusive Auto Layout constraint that fires during init
-    internal func setWidth(_ width: CGFloat, sidebar: Bool, height: CGFloat) {
+    internal func setWidth(_ width: CGFloat, sidebar: Bool, height: CGFloat, clockVisible: Bool = true) {
         self.sidebarMode = sidebar
+        self.clockVisible = clockVisible
         self.orientation = sidebar ? .vertical : .horizontal
         self.alignment = sidebar ? .width : .centerY
         self.spacing = sidebar ? Design.gap : 10
         self.edgeInsets = NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
         self.heightConstraint?.constant = height
         self.quotaHeader?.isHidden = !sidebar
-        self.quotaColumnHeader?.isHidden = !sidebar
+        // the 5h/周/月 column header belongs to the compact column grid; the
+        // dashboard uses the per-provider grouped list instead
+        self.quotaColumnHeader?.isHidden = sidebar
+        self.quotaBox?.isHidden = sidebar
+        self.groupedBox?.isHidden = !sidebar
         self.quotaSection?.spacing = sidebar ? 6 : 8
         self.quotaSection?.edgeInsets = sidebar
             ? NSEdgeInsets(top: 11, left: 13, bottom: 11, right: 13)
@@ -746,6 +830,19 @@ private class InfoStrip: NSStackView {
             self.clockWidthConstraint = self.clockBox?.widthAnchor.constraint(equalToConstant: width)
             self.quotaWidthConstraint?.isActive = true
             self.clockWidthConstraint?.isActive = true
+            // gravity-area stacks keep their intrinsic width, so the grouped
+            // list and every provider block are pinned to the card content
+            // width (card − 13pt insets each side)
+            self.groupedWidths.forEach { $0.isActive = false }
+            self.groupedWidths = []
+            let contentWidth = width - 26
+            if let box = self.groupedBox {
+                self.groupedWidths.append(box.widthAnchor.constraint(equalToConstant: contentWidth))
+            }
+            for group in self.quotaGroups {
+                self.groupedWidths.append(group.widthAnchor.constraint(equalToConstant: contentWidth))
+            }
+            self.groupedWidths.forEach { $0.isActive = true }
         } else {
             self.quotaWidthConstraint = self.quotaSection?.widthAnchor.constraint(equalToConstant: width * 0.46)
             self.quotaWidthConstraint?.isActive = true
@@ -753,13 +850,18 @@ private class InfoStrip: NSStackView {
         self.quotaBox?.orientation = sidebar ? .vertical : .vertical
         self.quotaBox?.alignment = .width
         self.quotaBox?.distribution = .fill
-        self.quotaBox?.spacing = sidebar ? 6 : 4
+        self.quotaBox?.spacing = sidebar ? 12 : 4
         self.providerRows.forEach { $0.configure(sidebar: sidebar) }
         self.clockBox?.orientation = sidebar ? .vertical : .horizontal
         self.clockBox?.alignment = sidebar ? .width : .centerY
         self.clockBox?.distribution = .fill
         self.clockBox?.spacing = sidebar ? 5 : 9
-        self.rebuildClock(self.latestReadings)
+        // suppress the clock section entirely when the dashboard renders clocks
+        // in a dedicated card beside the PowerFlow hero
+        self.clockBox?.isHidden = !clockVisible
+        if clockVisible {
+            self.rebuildClock(self.latestReadings)
+        }
     }
 
     func bindQuota(_ portal: CombinedQuotaPortal?) {
@@ -781,7 +883,11 @@ private class InfoStrip: NSStackView {
         // quota (left)
         if let q = self.quotaSource {
             self.quotaSection?.isHidden = false
-            InfoStrip.apply(quota: q, to: self.providerRows)
+            if self.sidebarMode {
+                InfoStrip.applyGrouped(quota: q, to: self.quotaGroups)
+            } else {
+                InfoStrip.apply(quota: q, to: self.providerRows)
+            }
             // Compact strip height scales with the visible provider rows so
             // seven data points can never clip again; the sidebar (dashboard)
             // keeps its fixed tall context height managed by setWidth.
@@ -793,7 +899,12 @@ private class InfoStrip: NSStackView {
             self.quotaSection?.isHidden = true
         }
 
-        // clock (right)
+        // clock (right) — suppressed entirely in dashboard mode, where the
+        // dedicated ClockCard beside PowerFlow carries the clocks instead
+        guard self.clockVisible else {
+            self.clockBox?.isHidden = true
+            return
+        }
         guard let readings = InfoStrip.clockPortal()?.clockReadings, !readings.isEmpty else {
             self.clockBox?.isHidden = true
             return
@@ -835,9 +946,19 @@ private class InfoStrip: NSStackView {
             error: q.kimiError, errorSlot: 1, note: kimiNote
         )
 
+        let kimi2Note = InfoStrip.staleNote(error: q.kimi2Error, updatedAt: q.kimi2UpdatedAt)
+        rows[1].set(
+            windows: [
+                (pct: q.kimi2FiveHourPct, resetAt: q.kimi2FiveHourResetAt),
+                (pct: q.kimi2WeeklyPct, resetAt: q.kimi2WeeklyResetAt),
+                (pct: nil, resetAt: nil)
+            ],
+            error: q.kimi2Error, errorSlot: 1, note: kimi2Note
+        )
+
         // Codex: show each window the API returned; the weekly slot carries
         // the error when nothing came back.
-        rows[1].set(
+        rows[2].set(
             windows: [
                 (pct: q.codexFiveHourRemainingPct, resetAt: q.codexFiveHourResetAt),
                 (pct: q.codexWeeklyRemainingPct, resetAt: q.codexWeeklyResetAt),
@@ -847,7 +968,7 @@ private class InfoStrip: NSStackView {
         )
 
         // OpenCode Go: three real windows; the monthly slot anchors the row.
-        rows[2].set(
+        rows[3].set(
             windows: [
                 (pct: q.openCodeFiveHourRemainingPct, resetAt: q.openCodeFiveHourResetAt),
                 (pct: q.openCodeWeeklyRemainingPct, resetAt: q.openCodeWeeklyResetAt),
@@ -855,6 +976,29 @@ private class InfoStrip: NSStackView {
             ],
             error: q.openCodeError, errorSlot: 2, note: openCodeNote
         )
+    }
+
+    /// Dashboard feed for the grouped list: only the windows a provider really
+    /// reports are passed on, so no placeholder rows can appear.
+    private static func applyGrouped(quota q: CombinedQuotaPortal, to groups: [QuotaGroupView]) {
+        guard groups.count == QuotaProvider.allCases.count else { return }
+        groups[0].set(windows: [
+            (pct: q.kimiFiveHourPct, resetAt: q.kimiFiveHourResetAt),
+            (pct: q.kimiWeeklyPct, resetAt: q.kimiWeeklyResetAt)
+        ], note: InfoStrip.staleNote(error: q.kimiError, updatedAt: q.kimiUpdatedAt), error: q.kimiError)
+        groups[1].set(windows: [
+            (pct: q.kimi2FiveHourPct, resetAt: q.kimi2FiveHourResetAt),
+            (pct: q.kimi2WeeklyPct, resetAt: q.kimi2WeeklyResetAt)
+        ], note: InfoStrip.staleNote(error: q.kimi2Error, updatedAt: q.kimi2UpdatedAt), error: q.kimi2Error)
+        groups[2].set(windows: [
+            (pct: q.codexFiveHourRemainingPct, resetAt: q.codexFiveHourResetAt),
+            (pct: q.codexWeeklyRemainingPct, resetAt: q.codexWeeklyResetAt)
+        ], note: InfoStrip.staleNote(error: q.codexError, updatedAt: q.codexUpdatedAt), error: q.codexError)
+        groups[3].set(windows: [
+            (pct: q.openCodeFiveHourRemainingPct, resetAt: q.openCodeFiveHourResetAt),
+            (pct: q.openCodeWeeklyRemainingPct, resetAt: q.openCodeWeeklyResetAt),
+            (pct: q.openCodeMonthlyRemainingPct, resetAt: q.openCodeMonthlyResetAt)
+        ], note: InfoStrip.staleNote(error: q.openCodeError, updatedAt: q.openCodeUpdatedAt), error: q.openCodeError)
     }
 
     /// Tooltip text for a value that survived a failed refresh, or nil when the
@@ -951,18 +1095,230 @@ private class InfoStrip: NSStackView {
     }
 }
 
+// Standalone world-clocks card for the dashboard layout. Sits beside the
+// PowerFlow hero (Row 1, ~38% width) and mirrors InfoStrip's sidebar-mode
+// clock rendering: header + one row per timezone, with the local entry
+// emphasized. The dashboard's InfoStrip only renders the Quota section, so
+// this card is the single place clocks appear in dashboard mode.
+private class ClockCard: NSStackView {
+    // matches the PowerFlow hero card height so row 1 reads as two equal cards
+    static let heroHeight: CGFloat = 118
+
+    private var portal: CombinedClockPortal?
+    private var widthConstraint: NSLayoutConstraint?
+    private var heightConstraint: NSLayoutConstraint?
+    private var localEntry: (name: NSTextField, time: NSTextField)? = nil
+    private var cityEntries: [(name: NSTextField, time: NSTextField, delta: NSTextField)] = []
+    private var clockNames: [String] = []
+    private let box = NSStackView()
+
+    init() {
+        super.init(frame: .zero)
+        self.wantsLayer = true
+        self.orientation = .vertical
+        self.alignment = .width
+        self.distribution = .fill
+        self.spacing = 0
+        self.edgeInsets = NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
+
+        self.box.orientation = .vertical
+        self.box.alignment = .width
+        self.box.distribution = .fill
+        self.box.spacing = 6
+        self.box.edgeInsets = NSEdgeInsets(top: 10, left: 13, bottom: 10, right: 13)
+        self.box.wantsLayer = true
+        self.box.applyCardStyle()
+        self.addArrangedSubview(self.box)
+        self.box.widthAnchor.constraint(equalTo: self.widthAnchor).isActive = true
+
+        self.heightConstraint = self.heightAnchor.constraint(equalToConstant: ClockCard.heroHeight)
+        self.heightConstraint?.isActive = true
+
+        let click = NSClickGestureRecognizer(target: self, action: #selector(self.openClockPopup))
+        self.box.addGestureRecognizer(click)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    public override func updateLayer() {
+        self.box.applyCardStyle()
+    }
+
+    func bind(_ portal: CombinedClockPortal?) {
+        self.portal = portal
+    }
+
+    func setWidth(_ width: CGFloat) {
+        if self.widthConstraint == nil {
+            self.widthConstraint = self.widthAnchor.constraint(equalToConstant: width)
+            self.widthConstraint?.isActive = true
+        } else {
+            self.widthConstraint?.constant = width
+        }
+    }
+
+    func refresh() {
+        guard let portal = self.portal else {
+            self.box.isHidden = true
+            return
+        }
+        let readings = portal.clockReadings
+        guard !readings.isEmpty else {
+            self.box.isHidden = true
+            return
+        }
+        self.box.isHidden = false
+        if readings.map({ $0.name }) != self.clockNames {
+            self.rebuild(readings)
+        }
+        var cityIdx = 0
+        for r in readings {
+            if r.isLocal {
+                self.localEntry?.time.stringValue = r.time
+            } else if cityIdx < self.cityEntries.count {
+                self.cityEntries[cityIdx].time.stringValue = r.time
+                self.cityEntries[cityIdx].delta.stringValue = r.dayDelta == 0 ? "" : String(format: "%+dd", r.dayDelta)
+                cityIdx += 1
+            }
+        }
+    }
+
+    // Layout: header row, then a two-column body sized to the 118pt hero
+    // height — the local city as the left hero (name + 26pt time), other
+    // cities stacked on the right. The previous single-column list needed
+    // ~140pt for five cities and was crushed into 0pt-high rows inside the
+    // old 62pt frame, printing five city names on top of each other.
+    private func rebuild(_ readings: [ClockReading]) {
+        self.box.subviews.forEach { $0.removeFromSuperview() }
+        self.localEntry = nil
+        self.cityEntries = []
+
+        let locals = readings.filter { $0.isLocal }
+        // cap the right column at 4 rows so the body always fits the fixed
+        // hero height (4 × 15pt rows + 3 × 3pt gaps = 69pt)
+        let cities = Array(readings.filter { !$0.isLocal }.prefix(4))
+        self.clockNames = readings.map { $0.name }
+
+        let title = NSStackView()
+        title.orientation = .horizontal
+        title.alignment = .centerY
+        title.spacing = 5
+        let icon = NSImageView()
+        icon.image = NSImage(systemSymbolName: "clock", accessibilityDescription: nil)
+        icon.symbolConfiguration = .init(pointSize: 10, weight: .semibold)
+        icon.contentTintColor = .systemBlue
+        let label = NSTextField(labelWithString: localizedString("World Clocks"))
+        label.font = .systemFont(ofSize: 11, weight: .semibold)
+        label.textColor = Design.secondaryTextColor
+        title.addArrangedSubview(icon)
+        title.addArrangedSubview(label)
+        title.addArrangedSubview(NSView())
+        self.box.addArrangedSubview(title)
+
+        let content = NSStackView()
+        content.orientation = .horizontal
+        content.alignment = .top
+        content.spacing = 16
+        content.distribution = .fill
+
+        let leftCol = NSStackView()
+        leftCol.orientation = .vertical
+        leftCol.alignment = .leading
+        leftCol.spacing = 3
+        if let local = locals.first {
+            let nameRow = NSStackView()
+            nameRow.orientation = .horizontal
+            nameRow.spacing = 5
+            let name = NSTextField(labelWithString: local.name)
+            name.font = .systemFont(ofSize: 11.5, weight: .semibold)
+            name.textColor = .systemBlue
+            nameRow.addArrangedSubview(name)
+            let localTag = NSTextField(labelWithString: localizedString("World Clock Local"))
+            localTag.font = .systemFont(ofSize: 8.5, weight: .medium)
+            localTag.textColor = .systemBlue
+            nameRow.addArrangedSubview(localTag)
+            let time = NSTextField(labelWithString: local.time)
+            time.font = .monospacedDigitSystemFont(ofSize: 26, weight: .bold)
+            time.textColor = .systemBlue
+            leftCol.addArrangedSubview(nameRow)
+            leftCol.addArrangedSubview(time)
+            self.localEntry = (name, time)
+        }
+
+        let rightCol = NSStackView()
+        rightCol.orientation = .vertical
+        rightCol.alignment = .width
+        rightCol.spacing = 3
+        for r in cities {
+            let block = NSStackView()
+            block.orientation = .horizontal
+            block.alignment = .centerY
+            block.spacing = 5
+
+            let name = NSTextField(labelWithString: r.name)
+            name.font = .systemFont(ofSize: 11, weight: .regular)
+            name.textColor = Design.secondaryTextColor
+            name.lineBreakMode = .byTruncatingTail
+            name.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+            let time = NSTextField(labelWithString: r.time)
+            time.font = .monospacedDigitSystemFont(ofSize: 12, weight: .medium)
+            time.textColor = .labelColor
+
+            let delta = NSTextField(labelWithString: "")
+            delta.font = .monospacedDigitSystemFont(ofSize: 9.5, weight: .regular)
+            delta.textColor = Design.secondaryTextColor
+            delta.alignment = .right
+            delta.widthAnchor.constraint(equalToConstant: 26).isActive = true
+
+            block.addArrangedSubview(name)
+            block.addArrangedSubview(NSView())
+            block.addArrangedSubview(time)
+            block.addArrangedSubview(delta)
+            rightCol.addArrangedSubview(block)
+            self.cityEntries.append((name, time, delta))
+        }
+
+        content.addArrangedSubview(leftCol)
+        content.addArrangedSubview(rightCol)
+        rightCol.widthAnchor.constraint(equalTo: content.widthAnchor, multiplier: 0.52, constant: -16).isActive = true
+
+        self.box.addArrangedSubview(content)
+        // leftover hero height pools after the body instead of stretching a row
+        self.box.addArrangedSubview(NSView())
+    }
+
+    public override func resetCursorRects() {
+        self.addCursorRect(self.bounds, cursor: .pointingHand)
+    }
+
+    @objc private func openClockPopup() {
+        guard let window = self.window else { return }
+        let rect = window.convertToScreen(self.convert(self.bounds, to: nil))
+        NotificationCenter.default.post(name: .togglePopup, object: nil, userInfo: [
+            "module": "Clock",
+            "origin": rect.origin,
+            "center": rect.width / 2
+        ])
+    }
+}
+
 // One row per provider in the quota strip. Windows map to fixed columns
 // (5h / week / monthly) so bars align vertically across rows; the row shows
 // only the window slots that carry data (except the anchor slot, which holds
 // the row visible to carry an error).
 public enum QuotaProvider: CaseIterable {
     case kimi
+    case kimi2
     case codex
     case openCode
 
     var label: String {
         switch self {
-        case .kimi: return localizedString("Quota provider Kimi")
+        case .kimi: return localizedString("Quota provider Kimi 1")
+        case .kimi2: return localizedString("Quota provider Kimi 2")
         case .codex: return localizedString("Quota provider Codex")
         case .openCode: return localizedString("Quota provider OpenCode")
         }
@@ -984,6 +1340,149 @@ private enum QuotaRowMetrics {
             + CGFloat(max(visibleRows, 1) - 1) * rowSpacing
             + headerHeight
         return content + insets
+    }
+}
+
+// MARK: - grouped quota list (dashboard sidebar)
+
+// One line per REAL window: "5小时  ▓▓▓▓░  100%  4时17分".
+// A provider that does not report a window (Kimi/Codex expose no monthly
+// quota) simply gets no line — the previous fixed 3-column grid drew an empty
+// gray track for them, which read as "0%" and padded the card with nothing.
+private class QuotaWindowRow: NSStackView {
+    private let bar = QuotaMiniBar()
+    private let valueField = NSTextField(labelWithString: "—")
+    private let countdownField = NSTextField(labelWithString: "")
+
+    init(windowTitle: String) {
+        super.init(frame: .zero)
+
+        self.orientation = .horizontal
+        // must be .fill: NSStackView defaults to .gravityAreas, which packs
+        // the fixed-width children into a gravity cluster and leaves the bar
+        // collapsed (title measured -4pt wide, value at x = -24)
+        self.distribution = .fill
+        self.alignment = .centerY
+        self.spacing = 8
+
+        let title = NSTextField(labelWithString: windowTitle)
+        title.font = Design.labelFont
+        title.textColor = Design.secondaryTextColor
+        title.lineBreakMode = .byTruncatingTail
+        title.widthAnchor.constraint(equalToConstant: 34).isActive = true
+
+        self.bar.heightAnchor.constraint(equalToConstant: 6).isActive = true
+        self.bar.setContentHuggingPriority(.defaultLow, for: .horizontal)
+
+        self.valueField.font = .monospacedDigitSystemFont(ofSize: 11, weight: .semibold)
+        self.valueField.alignment = .right
+        self.valueField.widthAnchor.constraint(equalToConstant: 34).isActive = true
+
+        self.countdownField.font = .monospacedDigitSystemFont(ofSize: 9.5, weight: .medium)
+        self.countdownField.textColor = Design.mutedTextColor
+        self.countdownField.alignment = .right
+        self.countdownField.lineBreakMode = .byTruncatingTail
+        self.countdownField.widthAnchor.constraint(equalToConstant: 56).isActive = true
+
+        self.addArrangedSubview(title)
+        self.addArrangedSubview(self.bar)
+        self.addArrangedSubview(self.valueField)
+        self.addArrangedSubview(self.countdownField)
+        // 18pt per line × 7 windows + 3 provider titles fits the 240pt card
+        // (matching the calendar beside it); 20pt rows overflowed it and the
+        // provider titles were squeezed to 5pt and 0pt.
+        self.heightAnchor.constraint(equalToConstant: 18).isActive = true
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    func set(pct: Double?, resetAt: Date?, note: String?) {
+        guard let p = pct else {
+            self.isHidden = true
+            self.valueField.stringValue = ""
+            self.countdownField.stringValue = ""
+            return
+        }
+        self.isHidden = false
+        let color = InfoStrip.quotaColor(p)
+        self.bar.set(fraction: p / 100, color: color)
+        self.valueField.stringValue = "\(Int(p.rounded()))%"
+        self.valueField.textColor = color
+        self.valueField.toolTip = note ?? localizedString("Quota remaining", "\(Int(p.rounded()))")
+        if let deadline = resetAt, let text = QuotaCountdownFormatter.text(until: deadline) {
+            self.countdownField.stringValue = text
+            self.countdownField.toolTip = localizedString("Quota updated at", shortDateText(deadline))
+        } else {
+            self.countdownField.stringValue = ""
+            self.countdownField.toolTip = nil
+        }
+    }
+
+    /// Fallback line when a provider returns nothing at all.
+    func setError(_ message: String?) {
+        self.isHidden = false
+        self.bar.set(fraction: 0, color: .systemRed)
+        self.valueField.stringValue = "!"
+        self.valueField.textColor = .systemRed
+        self.valueField.toolTip = message
+        self.countdownField.stringValue = ""
+        self.countdownField.toolTip = nil
+    }
+}
+
+// A provider block: its name, then one line per window it actually reports.
+private class QuotaGroupView: NSStackView {
+    let rows: [QuotaWindowRow]
+
+    init(providerLabel: String, windowTitles: [String]) {
+        self.rows = windowTitles.map { QuotaWindowRow(windowTitle: $0) }
+        super.init(frame: .zero)
+
+        self.orientation = .vertical
+        self.alignment = .width
+        // NOT .fill: filling along the vertical axis squeezes the provider
+        // title's intrinsic 14pt line to 5pt (and 0pt on the tallest group).
+        // Gravity areas keep every subview at its natural height.
+        self.distribution = .gravityAreas
+        self.spacing = 2
+
+        let title = NSTextField(labelWithString: providerLabel)
+        title.font = .systemFont(ofSize: 11, weight: .semibold)
+        title.textColor = .labelColor
+        title.alignment = .left
+        self.addArrangedSubview(title)
+        // the default autoresizing mask pins the label to its intrinsic width
+        // and parks it at the trailing edge; opt out and pin it to the card.
+        // Must run AFTER the label joins the hierarchy — a constraint between
+        // two views with no common ancestor throws on activation.
+        title.translatesAutoresizingMaskIntoConstraints = false
+        title.widthAnchor.constraint(equalTo: self.widthAnchor).isActive = true
+        // the provider name is the row's only label — never let it shrink
+        title.setContentCompressionResistancePriority(.required, for: .vertical)
+        self.setCustomSpacing(2, after: title)
+        self.rows.forEach {
+            self.addArrangedSubview($0)
+            // the enclosing stacks lay out with gravity areas, which keeps
+            // subviews at their intrinsic width — pin every row to the group
+            // width so the bar can actually stretch
+            $0.widthAnchor.constraint(equalTo: self.widthAnchor).isActive = true
+        }
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    /// windows and notes are parallel to self.rows; a nil pct hides the row.
+    func set(windows: [(pct: Double?, resetAt: Date?)], note: String?, error: String?) {
+        guard windows.count == self.rows.count else { return }
+        let hasValue = windows.contains { $0.pct != nil }
+        self.isHidden = !hasValue && (error?.isEmpty ?? true)
+        guard !self.isHidden else { return }
+        for (i, w) in windows.enumerated() {
+            self.rows[i].set(pct: w.pct, resetAt: w.resetAt, note: note)
+        }
+        if !hasValue {
+            self.rows[0].setError(error)
+        }
     }
 }
 
@@ -1032,7 +1531,11 @@ private class QuotaProviderRow: NSStackView {
             reset.alignment = .right
             reset.textColor = Design.mutedTextColor
             reset.lineBreakMode = .byTruncatingTail
-            reset.setContentCompressionResistancePriority(.required, for: .horizontal)
+            // must NOT be .required: it would fight the required equal-width
+            // slot constraints below and Auto Layout would resolve the conflict
+            // arbitrarily — the monthly column ("12天 21时") stretched ~2x
+            // wider, throwing the 5h/week/month headers off their columns
+            reset.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
 
             let valueStack = NSStackView(views: [value, NSView(), reset])
             valueStack.orientation = .horizontal
@@ -1043,7 +1546,7 @@ private class QuotaProviderRow: NSStackView {
             let slot = NSStackView(views: [bar, valueStack])
             slot.orientation = .vertical
             slot.alignment = .width
-            slot.spacing = 2
+            slot.spacing = 3
 
             self.addArrangedSubview(slot)
             self.slots.append((bar, value, reset, valueStack))
