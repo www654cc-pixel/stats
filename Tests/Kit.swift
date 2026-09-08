@@ -104,4 +104,37 @@ class KitTests: XCTestCase {
             from: Data("{\"name\":\"weekly\",\"utilization\":50}".utf8)
         ))
     }
+
+    // OpenCode Go: the reader stores the server-side consumed percent and
+    // derives the remaining side for display. Cover the conversion and the
+    // "which windows exist" gate the UI relies on.
+    func testOpenCodeQuotaRemainingConversion() throws {
+        var quota = OpenCodeQuota()
+        XCTAssertFalse(quota.hasAnyWindow)
+        XCTAssertNil(quota.rollingRemainingPct)
+
+        quota.rollingUsedPercent = 2
+        quota.weeklyUsedPercent = 3
+        quota.monthlyUsedPercent = 61
+        XCTAssertTrue(quota.hasAnyWindow)
+        XCTAssertEqual(quota.rollingRemainingPct, 98)
+        XCTAssertEqual(quota.weeklyRemainingPct, 97)
+        XCTAssertEqual(quota.monthlyRemainingPct, 39)
+    }
+
+    func testOpenCodeQuotaRemainingClampsOutOfRangeValues() throws {
+        var quota = OpenCodeQuota()
+        quota.monthlyUsedPercent = 120   // server drift guard: never display negative remaining
+        XCTAssertEqual(quota.monthlyRemainingPct, 0)
+        quota.monthlyUsedPercent = -5
+        XCTAssertEqual(quota.monthlyRemainingPct, 100)
+    }
+
+    func testOpenCodeQuotaDecodesFromAPIPayloadShape() throws {
+        // The real endpoint returns usage.{rolling|weekly|monthly}.{percent,resetsAt};
+        // the reader maps only those nodes, so the snapshot struct must decode an
+        // empty object (unknown fields are dropped during mapping).
+        let decoder = JSONDecoder()
+        XCTAssertNoThrow(try decoder.decode(OpenCodeQuota.self, from: Data("{}".utf8)))
+    }
 }

@@ -514,7 +514,10 @@ private class Popup: NSStackView, Popup_p {
         if dashboard {
             let sidebarWidth = columnWidth
             let calendarWidth = width - sidebarWidth - spacing
-            let contextHeight: CGFloat = 252
+            // 252 clipped the world-clock heading once the quota area grew to
+            // three provider rows (3 × 22pt rows + header + insets ≈ 103pt on
+            // top of clock/calendar content); 264 restores the full fit.
+            let contextHeight: CGFloat = 264
             self.calendar.setSize(width: calendarWidth, height: contextHeight)
             self.infoStrip.setWidth(sidebarWidth, sidebar: true, height: contextHeight)
             self.calendar.refresh()
@@ -572,15 +575,18 @@ private class Popup: NSStackView, Popup_p {
 
 // MARK: - Info strip (Quota + Clock merged)
 
-// One horizontal card: the left ~46% shows the Quota mini-cells (Kimi 5h /
-// Kimi 周 / Codex 5h / Codex 周 — the Codex rows appear only while the API
-// reports that window), the right side shows the world clock row. Merges the
-// former two separate cards into a single 46px line, reclaiming ~50px.
+// One horizontal card: the left ~46% shows the Quota provider rows (one row
+// per source — Kimi / Codex / Go — each with 5h/周/月 window slots aligned in
+// columns; rows appear only while the API reports their windows), the right
+// side shows the world clock row. Merges the former two separate cards into
+// a single line family; strip height follows the visible row count so the
+// data can never clip.
 private class InfoStrip: NSStackView {
     static let compactHeight: CGFloat = 62
+    static let sidebarFixedHeight: CGFloat = 264
 
     private var quotaSource: CombinedQuotaPortal?
-    private var quotaCells: [QuotaCell] = []
+    private var providerRows: [QuotaProviderRow] = []
     private var quotaBox: NSStackView?
     private var quotaSection: NSStackView?
     private var quotaHeader: NSView?
@@ -633,22 +639,21 @@ private class InfoStrip: NSStackView {
         quotaSection.addArrangedSubview(quotaHeader)
 
         let q = NSStackView()
-        q.orientation = .horizontal
-        q.alignment = .centerY
-        q.distribution = .fillEqually
-        q.spacing = 10
-        // Codex 5h is created up front but stays hidden until the API actually
-        // reports that window — OpenAI has retired and restored each of its two
-        // windows before, and the row set follows whatever comes back.
-        for title in [
-            localizedString("Quota Kimi 5h"),
-            localizedString("Quota Kimi weekly"),
-            localizedString("Quota Codex 5h"),
-            localizedString("Quota Codex weekly")
-        ] {
-            let cell = QuotaCell(title: title)
-            self.quotaCells.append(cell)
-            q.addArrangedSubview(cell)
+        q.orientation = .vertical
+        q.alignment = .width
+        q.spacing = 4
+        // One row per PROVIDER, not per window: with three sources × up to
+        // three windows, a per-window grid grew to 7 cells and clipped inside
+        // the fixed-height strip. A provider row keeps three equal window
+        // slots (5h / 周 / 月) so columns stay aligned across rows, and the
+        // row count is bounded by the number of providers, not windows.
+        // Codex and Go rows are created up front but stay hidden until the
+        // API actually reports their windows — the row set follows whatever
+        // comes back (OpenAI has retired and restored windows before).
+        for provider in QuotaProvider.allCases {
+            let row = QuotaProviderRow(provider: provider)
+            self.providerRows.append(row)
+            q.addArrangedSubview(row)
         }
         quotaSection.addArrangedSubview(q)
         self.addArrangedSubview(quotaSection)
@@ -705,11 +710,11 @@ private class InfoStrip: NSStackView {
             self.quotaWidthConstraint = self.quotaSection?.widthAnchor.constraint(equalToConstant: width * 0.46)
             self.quotaWidthConstraint?.isActive = true
         }
-        self.quotaBox?.orientation = sidebar ? .vertical : .horizontal
-        self.quotaBox?.alignment = sidebar ? .width : .centerY
-        self.quotaBox?.distribution = sidebar ? .fill : .fillEqually
-        self.quotaBox?.spacing = sidebar ? 5 : 10
-        self.quotaCells.forEach { $0.configure(sidebar: sidebar) }
+        self.quotaBox?.orientation = sidebar ? .vertical : .vertical
+        self.quotaBox?.alignment = .width
+        self.quotaBox?.distribution = .fill
+        self.quotaBox?.spacing = sidebar ? 6 : 4
+        self.providerRows.forEach { $0.configure(sidebar: sidebar) }
         self.clockBox?.orientation = sidebar ? .vertical : .horizontal
         self.clockBox?.alignment = sidebar ? .width : .centerY
         self.clockBox?.distribution = .fill
@@ -736,7 +741,14 @@ private class InfoStrip: NSStackView {
         // quota (left)
         if let q = self.quotaSource {
             self.quotaSection?.isHidden = false
-            InfoStrip.apply(quota: q, to: self.quotaCells)
+            InfoStrip.apply(quota: q, to: self.providerRows)
+            // Compact strip height scales with the visible provider rows so
+            // seven data points can never clip again; the sidebar (dashboard)
+            // keeps its fixed tall context height managed by setWidth.
+            if !self.sidebarMode {
+                let visible = max(self.providerRows.filter { !$0.isHidden }.count, 1)
+                self.heightConstraint?.constant = QuotaRowMetrics.stripHeight(visibleRows: visible, sidebar: false)
+            }
         } else {
             self.quotaSection?.isHidden = true
         }
@@ -762,53 +774,47 @@ private class InfoStrip: NSStackView {
         return m.portal as? CombinedClockPortal
     }
 
-    private static func apply(quota q: CombinedQuotaPortal, to cells: [QuotaCell]) {
-        guard cells.count == 4 else { return }
+    private static func apply(quota q: CombinedQuotaPortal, to rows: [QuotaProviderRow]) {
+        guard rows.count == QuotaProvider.allCases.count else { return }
 
         // A failed poll no longer wipes the numbers: the reader hands back the
         // previous reading plus an error, and a kept value is drawn dimmed with
         // its age in the tooltip rather than as "—".
         let kimiNote = InfoStrip.staleNote(error: q.kimiError, updatedAt: q.kimiUpdatedAt)
         let codexNote = InfoStrip.staleNote(error: q.codexError, updatedAt: q.codexUpdatedAt)
+        let openCodeNote = InfoStrip.staleNote(error: q.openCodeError, updatedAt: q.openCodeUpdatedAt)
 
-        for (i, pct) in [q.kimiFiveHourPct, q.kimiWeeklyPct].enumerated() {
-            if let p = pct {
-                cells[i].set(remainingPct: p, color: InfoStrip.quotaColor(p),
-                             stale: kimiNote != nil, note: kimiNote)
-            } else if let e = q.kimiError, !e.isEmpty {
-                cells[i].setError(e)
-            } else {
-                cells[i].set(remainingPct: nil, color: .lightGray)
-            }
-        }
+        // Kimi: two windows. The weekly slot doubles as the error carrier when
+        // the whole source is unavailable, so the row never collapses silently.
+        rows[0].set(
+            windows: [
+                (pct: q.kimiFiveHourPct, resetAt: q.kimiFiveHourResetAt),
+                (pct: q.kimiWeeklyPct, resetAt: q.kimiWeeklyResetAt),
+                (pct: nil, resetAt: nil)
+            ],
+            error: q.kimiError, errorSlot: 1, note: kimiNote
+        )
 
-        // Codex: show each window the API returned. When neither is available the
-        // weekly cell stays visible to carry the error, so the card never
-        // collapses to an unexplained empty space.
-        let codex: [Double?] = [q.codexFiveHourRemainingPct, q.codexWeeklyRemainingPct]
-        for (offset, pct) in codex.enumerated() {
-            let cell = cells[2 + offset]
-            let isWeekly = offset == 1
-            if let p = pct {
-                cell.isHidden = false
-                cell.set(remainingPct: p, color: InfoStrip.quotaColor(p),
-                         stale: codexNote != nil, note: codexNote)
-            } else if isWeekly && q.codexFiveHourRemainingPct == nil {
-                cell.isHidden = false
-                if let e = q.codexError, !e.isEmpty {
-                    cell.setError(e)
-                } else {
-                    cell.set(remainingPct: nil, color: .lightGray)
-                }
-            } else {
-                cell.isHidden = true
-            }
-        }
+        // Codex: show each window the API returned; the weekly slot carries
+        // the error when nothing came back.
+        rows[1].set(
+            windows: [
+                (pct: q.codexFiveHourRemainingPct, resetAt: q.codexFiveHourResetAt),
+                (pct: q.codexWeeklyRemainingPct, resetAt: q.codexWeeklyResetAt),
+                (pct: nil, resetAt: nil)
+            ],
+            error: q.codexError, errorSlot: 1, note: codexNote
+        )
 
-        cells[0].set(countdownUntil: q.kimiFiveHourResetAt)
-        cells[1].set(countdownUntil: q.kimiWeeklyResetAt)
-        cells[2].set(countdownUntil: q.codexFiveHourResetAt)
-        cells[3].set(countdownUntil: q.codexWeeklyResetAt)
+        // OpenCode Go: three real windows; the monthly slot anchors the row.
+        rows[2].set(
+            windows: [
+                (pct: q.openCodeFiveHourRemainingPct, resetAt: q.openCodeFiveHourResetAt),
+                (pct: q.openCodeWeeklyRemainingPct, resetAt: q.openCodeWeeklyResetAt),
+                (pct: q.openCodeMonthlyRemainingPct, resetAt: q.openCodeMonthlyResetAt)
+            ],
+            error: q.openCodeError, errorSlot: 2, note: openCodeNote
+        )
     }
 
     /// Tooltip text for a value that survived a failed refresh, or nil when the
@@ -891,11 +897,183 @@ private class InfoStrip: NSStackView {
         ])
     }
 
-    private static func quotaColor(_ pct: Double) -> NSColor {
+    static func quotaColor(_ pct: Double) -> NSColor {
         if pct > 50 { return Design.good }
         if pct >= 20 { return Design.warn }
         return Design.critical
     }
+}
+
+// One row per provider in the quota strip. Windows map to fixed columns
+// (5h / week / monthly) so bars align vertically across rows; the row shows
+// only the window slots that carry data (except the anchor slot, which holds
+// the row visible to carry an error).
+public enum QuotaProvider: CaseIterable {
+    case kimi
+    case codex
+    case openCode
+
+    var label: String {
+        switch self {
+        case .kimi: return localizedString("Quota provider Kimi")
+        case .codex: return localizedString("Quota provider Codex")
+        case .openCode: return localizedString("Quota provider OpenCode")
+        }
+    }
+}
+
+// Layout metrics for the provider-row redesign. The compact strip height is
+// derived from the visible row count so a new provider can never re-introduce
+// the clipping regression (7 fixed cells in a fixed 46px card).
+private enum QuotaRowMetrics {
+    static let rowHeight: CGFloat = 22      // 6pt bar + 2pt gap + ~12pt text line
+    static let rowSpacing: CGFloat = 5
+    static let headerHeight: CGFloat = 14
+    static let insets: CGFloat = 9 * 2      // strip edge insets (top+bottom)
+
+    static func stripHeight(visibleRows: Int, sidebar: Bool) -> CGFloat {
+        if sidebar { return 264 }           // dashboard context height (matches setWidth caller)
+        let content = CGFloat(max(visibleRows, 1)) * rowHeight
+            + CGFloat(max(visibleRows, 1) - 1) * rowSpacing
+            + headerHeight
+        return content + insets
+    }
+}
+
+private class QuotaProviderRow: NSStackView {
+    private let provider: QuotaProvider
+    private let labelField: NSTextField
+    // One slot per window column; slot 0..2 = 5h / weekly / monthly.
+    // Vertical slot layout: bar on its own line, value+countdown beneath.
+    // A horizontal bar+number+countdown row needs ~120pt per window; inside a
+    // 316pt sidebar card three of them squeezed the bars into dots. Stacking
+    // gives every bar a real width at any card width.
+    private var slots: [(bar: QuotaMiniBar, value: NSTextField, reset: NSTextField, valueStack: NSStackView)] = []
+
+    init(provider: QuotaProvider) {
+        self.provider = provider
+        self.labelField = NSTextField(labelWithString: provider.label)
+        self.labelField.font = Design.subFont
+        self.labelField.textColor = Design.secondaryTextColor
+        self.labelField.lineBreakMode = .byTruncatingTail
+        self.labelField.setContentCompressionResistancePriority(.required, for: .horizontal)
+        self.labelField.setContentHuggingPriority(.required, for: .horizontal)
+
+        super.init(frame: .zero)
+        self.orientation = .horizontal
+        // Center the label against the whole slot (bar + text line), not just
+        // the bar line — the label otherwise floats above the row's visual
+        // center.
+        self.alignment = .centerY
+        self.spacing = 6
+        self.addArrangedSubview(self.labelField)
+
+        var slotViews: [NSView] = []
+        for _ in 0..<3 {
+            let bar = QuotaMiniBar()
+            bar.heightAnchor.constraint(equalToConstant: 6).isActive = true
+
+            let value = NSTextField(labelWithString: "—")
+            value.font = .monospacedDigitSystemFont(ofSize: 10.5, weight: .semibold)
+            value.alignment = .left
+            value.textColor = .labelColor
+
+            let reset = NSTextField(labelWithString: "")
+            reset.font = .monospacedDigitSystemFont(ofSize: 9, weight: .medium)
+            reset.alignment = .right
+            reset.textColor = Design.mutedTextColor
+            reset.lineBreakMode = .byTruncatingTail
+            reset.setContentCompressionResistancePriority(.required, for: .horizontal)
+
+            let valueStack = NSStackView(views: [value, NSView(), reset])
+            valueStack.orientation = .horizontal
+            valueStack.alignment = .firstBaseline
+            valueStack.spacing = 3
+
+            // bar fills the slot width; text line hugs under it
+            let slot = NSStackView(views: [bar, valueStack])
+            slot.orientation = .vertical
+            slot.alignment = .width
+            slot.spacing = 2
+
+            self.addArrangedSubview(slot)
+            self.slots.append((bar, value, reset, valueStack))
+            slotViews.append(slot)
+        }
+        // The three window slots share one equal width regardless of how many
+        // are visible — hiding a slot's content must not shrink its column,
+        // otherwise the 5h/周/月 columns stop lining up across rows.
+        for i in 1..<slotViews.count {
+            slotViews[i].widthAnchor.constraint(equalTo: slotViews[0].widthAnchor).isActive = true
+            slotViews[i].setContentHuggingPriority(.defaultLow, for: .horizontal)
+        }
+        slotViews[0].setContentHuggingPriority(.defaultLow, for: .horizontal)
+        self.configure(sidebar: false)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    func configure(sidebar: Bool) {
+        self.spacing = sidebar ? 8 : 6
+    }
+
+    /// data: one entry per window slot (exactly 3; trailing windows may be nil).
+    /// errorSlot: which slot shows the row error when no window has data.
+    func set(windows: [(pct: Double?, resetAt: Date?)], error: String?, errorSlot: Int, note: String?) {
+        guard windows.count == self.slots.count else { return }
+        let hasAny = windows.contains { $0.pct != nil }
+
+        for (idx, slot) in self.slots.enumerated() {
+            let entry = windows[idx]
+            if let p = entry.pct {
+                slot.bar.isHidden = false
+                slot.valueStack.isHidden = false
+                slot.bar.set(fraction: p / 100, color: InfoStrip.quotaColor(p))
+                slot.value.stringValue = "\(Int(p.rounded()))%"
+                slot.value.textColor = InfoStrip.quotaColor(p)
+                slot.value.toolTip = note ?? localizedString("Quota remaining", "\(Int(p.rounded()))")
+            } else if hasAny {
+                // Window the provider does not offer (e.g. Kimi has no monthly):
+                // keep an empty gray TRACK so the 3-column grid stays complete
+                // across rows, but hide the text line — no fake numbers.
+                slot.bar.isHidden = false
+                slot.bar.set(fraction: 0, color: .lightGray)
+                slot.valueStack.isHidden = true
+                slot.value.stringValue = ""
+                slot.value.toolTip = nil
+            } else if idx == errorSlot, let e = error, !e.isEmpty {
+                slot.bar.isHidden = false
+                slot.bar.set(fraction: 0, color: .systemRed)
+                slot.valueStack.isHidden = false
+                slot.value.stringValue = "!"
+                slot.value.textColor = .systemRed
+                slot.value.toolTip = e
+            } else {
+                slot.bar.isHidden = false
+                slot.bar.set(fraction: 0, color: .lightGray)
+                slot.valueStack.isHidden = true
+                slot.value.stringValue = ""
+                slot.value.toolTip = nil
+            }
+            if let deadline = entry.resetAt, entry.pct != nil,
+               let text = QuotaCountdownFormatter.text(until: deadline) {
+                slot.reset.isHidden = false
+                slot.reset.stringValue = text
+                slot.reset.toolTip = localizedString("Quota updated at", shortDateText(deadline))
+            } else {
+                slot.reset.isHidden = true
+                slot.reset.stringValue = ""
+            }
+        }
+    }
+}
+
+private func shortDateText(_ date: Date) -> String {
+    let fmt = DateFormatter()
+    fmt.dateFormat = "MM-dd HH:mm"
+    return fmt.string(from: date)
 }
 
 private class QuotaCell: NSStackView {
@@ -1042,7 +1220,12 @@ private class QuotaMiniBar: NSView {
 
         guard self.fraction > 0 else { return }
 
-        let w = max(self.bounds.width * CGFloat(self.fraction), self.bounds.height)
+        // A tiny fraction (5% of a ~90pt track = 4.5pt) is smaller than the
+        // corner radius and visually collapses into a dot that reads as
+        // "not loaded". Enforce a minimum visible fill of one full cap so
+        // any non-zero value stays legible as a bar.
+        let minFill = self.bounds.height
+        let w = max(self.bounds.width * CGFloat(self.fraction), minFill)
         let fill = NSBezierPath(roundedRect: NSRect(x: 0, y: 0, width: w, height: self.bounds.height), xRadius: radius, yRadius: radius)
 
         let lighter = self.color.highlight(withLevel: 0.25) ?? self.color

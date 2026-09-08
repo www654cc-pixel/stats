@@ -583,6 +583,12 @@
 "Quota Kimi weekly" = "Kimi 周";
 "Quota Codex 5h" = "Codex 5h";
 "Quota Codex weekly" = "Codex 周";
+"Quota OpenCode 5h" = "Go 5h";
+"Quota OpenCode weekly" = "Go 周";
+"Quota OpenCode monthly" = "Go 月";
+"Quota provider Kimi" = "Kimi";
+"Quota provider Codex" = "Codex";
+"Quota provider OpenCode" = "Go";
 "Quota countdown imminent" = "即将重置";
 "Quota countdown minute" = "%0分";
 "Quota countdown under minute" = "不足1分";

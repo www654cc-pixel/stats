@@ -94,18 +94,28 @@ public protocol CombinedQuotaPortal: AnyObject {
     var kimiWeeklyPct: Double? { get }
     var codexFiveHourRemainingPct: Double? { get } // present only while Codex exposes this window
     var codexWeeklyRemainingPct: Double? { get }   // 100 - weekly utilization, or nil
+    // OpenCode Go: three windows (5h rolling / weekly / monthly), each present
+    // only while the API key exists and the endpoint returned that window.
+    var openCodeFiveHourRemainingPct: Double? { get }
+    var openCodeWeeklyRemainingPct: Double? { get }
+    var openCodeMonthlyRemainingPct: Double? { get }
     var kimiError: String? { get }
     var codexError: String? { get }
+    var openCodeError: String? { get }
     // When each source last returned usable data, so the dashboard can dim a
     // stale value instead of blanking it out on a single failed poll.
     var kimiUpdatedAt: Date? { get }
     var codexUpdatedAt: Date? { get }
+    var openCodeUpdatedAt: Date? { get }
     // Original reset deadlines. The dashboard formats these against the current
     // time on every refresh, so countdown text advances without extra API polls.
     var kimiFiveHourResetAt: Date? { get }
     var kimiWeeklyResetAt: Date? { get }
     var codexFiveHourResetAt: Date? { get }
     var codexWeeklyResetAt: Date? { get }
+    var openCodeFiveHourResetAt: Date? { get }
+    var openCodeWeeklyResetAt: Date? { get }
+    var openCodeMonthlyResetAt: Date? { get }
     /// Ask the module for a fresh fetch (throttled + de-duplicated by the module).
     /// Called when the overview panel opens, so what you see is what was just read.
     func refreshQuota()

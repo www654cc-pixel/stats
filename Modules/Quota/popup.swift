@@ -15,6 +15,9 @@ internal class Popup: PopupWrapper {
     private var codexPrimaryField: NSTextField?
     private var codexSecondaryField: NSTextField?
     private var codexResetField: NSTextField?
+    private var openCodeRollingField: NSTextField?
+    private var openCodeWeeklyField: NSTextField?
+    private var openCodeMonthlyField: NSTextField?
     private var updatedField: NSTextField?
     private var errorField: NSTextField?
 
@@ -55,6 +58,9 @@ internal class Popup: PopupWrapper {
         self.codexPrimaryField = self.valueField()
         self.codexSecondaryField = self.valueField()
         self.codexResetField = self.valueField()
+        self.openCodeRollingField = self.valueField()
+        self.openCodeWeeklyField = self.valueField()
+        self.openCodeMonthlyField = self.valueField()
         self.updatedField = self.valueField()
         self.errorField = NSTextField(wrappingLabelWithString: "")
         self.errorField?.font = NSFont.systemFont(ofSize: 11, weight: .regular)
@@ -76,12 +82,19 @@ internal class Popup: PopupWrapper {
             PreferencesRow("Codex · 重置时间", component: self.codexResetField!)
         ])
 
+        let openCode = PreferencesSection([
+            PreferencesRow("OpenCode Go · 5h 剩余", component: self.openCodeRollingField!),
+            PreferencesRow("OpenCode Go · 周剩余", component: self.openCodeWeeklyField!),
+            PreferencesRow("OpenCode Go · 月剩余", component: self.openCodeMonthlyField!)
+        ])
+
         let meta = PreferencesSection([
             PreferencesRow("最近更新", component: self.updatedField!)
         ])
 
         self.addArrangedSubview(kimi)
         self.addArrangedSubview(codex)
+        self.addArrangedSubview(openCode)
         self.addArrangedSubview(meta)
         self.addArrangedSubview(self.errorField!)
     }
@@ -135,6 +148,30 @@ internal class Popup: PopupWrapper {
             self.codexPrimaryField?.stringValue = "—"
             self.codexSecondaryField?.stringValue = "—"
             self.codexResetField?.stringValue = "—"
+        }
+
+        if let o = value.openCode, o.hasAnyWindow {
+            func fmtRemain(_ rem: Double?, resetAt: Date?) -> String {
+                guard let rem else { return "—" }
+                var text = "\(Int(rem.rounded()))%"
+                if let at = resetAt {
+                    let fmt = DateFormatter()
+                    fmt.dateFormat = "MM-dd HH:mm"
+                    text += "  (重置 \(fmt.string(from: at)))"
+                }
+                return text
+            }
+            self.openCodeRollingField?.stringValue = fmtRemain(o.rollingRemainingPct, resetAt: o.rollingResetAt)
+            self.openCodeWeeklyField?.stringValue = fmtRemain(o.weeklyRemainingPct, resetAt: o.weeklyResetAt)
+            self.openCodeMonthlyField?.stringValue = fmtRemain(o.monthlyRemainingPct, resetAt: o.monthlyResetAt)
+        } else if let e = value.openCode?.error, !e.isEmpty {
+            self.openCodeRollingField?.stringValue = e
+            self.openCodeWeeklyField?.stringValue = "—"
+            self.openCodeMonthlyField?.stringValue = "—"
+        } else {
+            self.openCodeRollingField?.stringValue = "未配置"
+            self.openCodeWeeklyField?.stringValue = "—"
+            self.openCodeMonthlyField?.stringValue = "—"
         }
 
         if let updated = value.updatedAt {

@@ -74,6 +74,10 @@ public class Portal: PortalWrapper, CombinedQuotaPortal {
     private var kimiWeekField: NSTextField?
     private var codexBar: QuotaBar?
     private var codexField: NSTextField?
+    // OpenCode Go rows: created up front, shown only while the key exists and
+    // the API returned data (module is enabled by default like Codex).
+    private var openCodeBars: [QuotaBar?] = [nil, nil, nil]
+    private var openCodeFields: [NSTextField?] = [nil, nil, nil]
 
     // snapshot for the combined overview's compact strip (CombinedQuotaPortal)
     private var snapKimi5h: Double?
@@ -82,12 +86,20 @@ public class Portal: PortalWrapper, CombinedQuotaPortal {
     private var snapCodexWeekRem: Double?
     private var snapKimiErr: String?
     private var snapCodexErr: String?
+    private var snapOpenCodeErr: String?
     private var snapKimiUpdatedAt: Date?
     private var snapCodexUpdatedAt: Date?
+    private var snapOpenCodeUpdatedAt: Date?
     private var snapKimi5hResetAt: Date?
     private var snapKimiWeekResetAt: Date?
     private var snapCodex5hResetAt: Date?
     private var snapCodexWeekResetAt: Date?
+    private var snapOpenCode5hRem: Double?
+    private var snapOpenCodeWeekRem: Double?
+    private var snapOpenCodeMonthRem: Double?
+    private var snapOpenCode5hResetAt: Date?
+    private var snapOpenCodeWeekResetAt: Date?
+    private var snapOpenCodeMonthResetAt: Date?
 
     /// Set by the module so the dashboard can ask for an on-demand fetch.
     internal var refreshHandler: (() -> Void)?
@@ -107,6 +119,9 @@ public class Portal: PortalWrapper, CombinedQuotaPortal {
         (self.kimi5hBar, self.kimi5hField)   = Self.makeRow(into: rows, label: "Kimi 5h")
         (self.kimiWeekBar, self.kimiWeekField) = Self.makeRow(into: rows, label: "Kimi 周")
         (self.codexBar, self.codexField)     = Self.makeRow(into: rows, label: localizedString("Quota Codex weekly"))
+        (self.openCodeBars[0], self.openCodeFields[0]) = Self.makeRow(into: rows, label: "Go 5h")
+        (self.openCodeBars[1], self.openCodeFields[1]) = Self.makeRow(into: rows, label: "Go 周")
+        (self.openCodeBars[2], self.openCodeFields[2]) = Self.makeRow(into: rows, label: "Go 月")
 
         self.addArrangedSubview(rows)
     }
@@ -149,6 +164,7 @@ public class Portal: PortalWrapper, CombinedQuotaPortal {
         self.snapKimiErr = value.kimiError
         self.snapKimiUpdatedAt = value.kimiUpdatedAt
         self.snapCodexUpdatedAt = value.codexUpdatedAt
+        self.snapOpenCodeUpdatedAt = value.openCodeUpdatedAt
 
         // --- Kimi (5h + weekly) ---
         if let k = value.kimi {
@@ -219,6 +235,58 @@ public class Portal: PortalWrapper, CombinedQuotaPortal {
             self.snapCodexWeekResetAt = nil
             self.snapCodexErr = nil
         }
+
+        // --- OpenCode Go (rolling 5h + weekly + monthly) ---
+        // Same data-driven pattern as Codex: rows light up only for the windows
+        // the API actually returned. Percentages arrive as consumed share, so
+        // display the remaining side (100 - used) like every other row.
+        if let o = value.openCode, o.hasAnyWindow {
+            let windows: [(Double?, Date?)] = [
+                (o.rollingRemainingPct, o.rollingResetAt),
+                (o.weeklyRemainingPct, o.weeklyResetAt),
+                (o.monthlyRemainingPct, o.monthlyResetAt)
+            ]
+            for (idx, pair) in windows.enumerated() {
+                if let rem = pair.0 {
+                    self.openCodeBars[idx]?.value = rem / 100
+                    self.openCodeBars[idx]?.color = Self.quotaColor(rem)
+                    self.openCodeFields[idx]?.stringValue = "\(Int(rem.rounded()))%"
+                } else {
+                    self.openCodeBars[idx]?.value = 0
+                    self.openCodeBars[idx]?.color = .lightGray
+                    self.openCodeFields[idx]?.stringValue = "—"
+                }
+                switch idx {
+                case 0:
+                    self.snapOpenCode5hRem = pair.0
+                    self.snapOpenCode5hResetAt = pair.1
+                case 1:
+                    self.snapOpenCodeWeekRem = pair.0
+                    self.snapOpenCodeWeekResetAt = pair.1
+                default:
+                    self.snapOpenCodeMonthRem = pair.0
+                    self.snapOpenCodeMonthResetAt = pair.1
+                }
+            }
+            self.snapOpenCodeErr = nil
+        } else if let o = value.openCode, let e = o.error, !e.isEmpty {
+            for idx in 0..<3 {
+                self.openCodeBars[idx]?.value = 0
+                self.openCodeBars[idx]?.color = .systemRed
+                self.openCodeFields[idx]?.stringValue = e
+            }
+            self.snapOpenCodeErr = e
+        } else {
+            for idx in 0..<3 {
+                self.openCodeBars[idx]?.value = 0
+                self.openCodeBars[idx]?.color = .lightGray
+                self.openCodeFields[idx]?.stringValue = "—"
+            }
+            self.snapOpenCode5hResetAt = nil
+            self.snapOpenCodeWeekResetAt = nil
+            self.snapOpenCodeMonthResetAt = nil
+            self.snapOpenCodeErr = nil
+        }
     }
 
     // MARK: CombinedQuotaPortal
@@ -227,14 +295,22 @@ public class Portal: PortalWrapper, CombinedQuotaPortal {
     public var kimiWeeklyPct: Double? { self.snapKimiWeek }
     public var codexFiveHourRemainingPct: Double? { self.snapCodex5hRem }
     public var codexWeeklyRemainingPct: Double? { self.snapCodexWeekRem }
+    public var openCodeFiveHourRemainingPct: Double? { self.snapOpenCode5hRem }
+    public var openCodeWeeklyRemainingPct: Double? { self.snapOpenCodeWeekRem }
+    public var openCodeMonthlyRemainingPct: Double? { self.snapOpenCodeMonthRem }
     public var kimiError: String? { self.snapKimiErr }
     public var codexError: String? { self.snapCodexErr }
+    public var openCodeError: String? { self.snapOpenCodeErr }
     public var kimiUpdatedAt: Date? { self.snapKimiUpdatedAt }
     public var codexUpdatedAt: Date? { self.snapCodexUpdatedAt }
+    public var openCodeUpdatedAt: Date? { self.snapOpenCodeUpdatedAt }
     public var kimiFiveHourResetAt: Date? { self.snapKimi5hResetAt }
     public var kimiWeeklyResetAt: Date? { self.snapKimiWeekResetAt }
     public var codexFiveHourResetAt: Date? { self.snapCodex5hResetAt }
     public var codexWeeklyResetAt: Date? { self.snapCodexWeekResetAt }
+    public var openCodeFiveHourResetAt: Date? { self.snapOpenCode5hResetAt }
+    public var openCodeWeeklyResetAt: Date? { self.snapOpenCodeWeekResetAt }
+    public var openCodeMonthlyResetAt: Date? { self.snapOpenCodeMonthResetAt }
 
     public func refreshQuota() {
         self.refreshHandler?()

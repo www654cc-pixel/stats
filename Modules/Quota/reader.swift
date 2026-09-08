@@ -2,15 +2,18 @@
 //  reader.swift
 //  Quota
 //
-//  Quota reader: fetches Kimi For Coding plan quota and Codex (ChatGPT)
-//  subscription quota. Request shapes mirror CC Switch (farion1231/cc-switch)
-//  but the parsing matches the ACTUAL API responses on this machine
-//  (verified 2026-07-21):
+//  Quota reader: fetches Kimi For Coding plan quota, Codex (ChatGPT)
+//  subscription quota and OpenCode Go usage. Kimi/Codex request shapes mirror
+//  CC Switch (farion1231/cc-switch) but the parsing matches the ACTUAL API
+//  responses on this machine (verified 2026-07-21):
 //    Kimi  : GET https://api.kimi.com/coding/v1/usages
 //            -> usage.{limit,used,remaining,resetTime}  (套餐/周额度)
 //            -> limits[0].{window.duration/minutes, detail.{limit,remaining,resetTime}} (5h 窗口)
 //    Codex : GET https://chatgpt.com/backend-api/wham/usage
 //            -> rate_limit.primary_window / secondary_window
+//  OpenCode Go (verified 2026-09-08):
+//    GET https://opencode.ai/zen/go/v1/usage
+//            -> usage.{rolling|weekly|monthly}.{percent,resetsAt} (服务端已算好已用%)
 //
 
 import Cocoa
@@ -95,12 +98,75 @@ public struct ClaudeQuota: Codable {
     var error: String?
 }
 
+// MARK: - OpenCode Go (opencode.ai Zen)
+//
+// Official endpoint (verified with a real key 2026-09-08):
+//   GET https://opencode.ai/zen/go/v1/usage
+//   Authorization: Bearer <Go API key>
+//   -> usage.{rolling|weekly|monthly}.{status,percent,resetsAt}
+// `percent` is the consumed share (0-100) computed server-side; the dashboard
+// displays 100 - percent for parity with the Kimi/Codex remaining-% rows.
+// The key lives in OpenCode's own auth store, ~/.local/share/opencode/auth.json
+// ({"opencode-go": {"type": "api", "key": "sk-…"}}) — same zero-config pattern
+// as Codex's ~/.codex/auth.json.
+//
+// NOTE: Cloudflare blocks the *default* Python-urllib UA on this host with
+// error 1010; URLSession's own UA passes. Send an explicit custom UA anyway so
+// the request never depends on the framework's default fingerprint.
+
+public struct OpenCodeQuota: Codable {
+    // Public stored props so the type is constructible/inspectable from the
+    // Tests target (which imports the framework without @testable). The reader
+    // fills them from the API payload; UI/tests read the derived values.
+    public var rollingUsedPercent: Double?     // 0-100, consumed share
+    public var rollingResetAt: Date?
+    public var weeklyUsedPercent: Double?
+    public var weeklyResetAt: Date?
+    public var monthlyUsedPercent: Double?
+    public var monthlyResetAt: Date?
+    public var error: String?
+
+    public var hasAnyWindow: Bool {
+        self.rollingUsedPercent != nil || self.weeklyUsedPercent != nil || self.monthlyUsedPercent != nil
+    }
+    public var rollingRemainingPct: Double? { Self.remaining(fromUsed: self.rollingUsedPercent) }
+    public var weeklyRemainingPct: Double? { Self.remaining(fromUsed: self.weeklyUsedPercent) }
+    public var monthlyRemainingPct: Double? { Self.remaining(fromUsed: self.monthlyUsedPercent) }
+
+    /// The default memberwise initializer is internal even on a public struct,
+    /// so declare it explicitly — the Tests target constructs this type directly.
+    public init(
+        rollingUsedPercent: Double? = nil,
+        rollingResetAt: Date? = nil,
+        weeklyUsedPercent: Double? = nil,
+        weeklyResetAt: Date? = nil,
+        monthlyUsedPercent: Double? = nil,
+        monthlyResetAt: Date? = nil,
+        error: String? = nil
+    ) {
+        self.rollingUsedPercent = rollingUsedPercent
+        self.rollingResetAt = rollingResetAt
+        self.weeklyUsedPercent = weeklyUsedPercent
+        self.weeklyResetAt = weeklyResetAt
+        self.monthlyUsedPercent = monthlyUsedPercent
+        self.monthlyResetAt = monthlyResetAt
+        self.error = error
+    }
+
+    private static func remaining(fromUsed used: Double?) -> Double? {
+        guard let used else { return nil }
+        return max(0, min(100, 100 - used))
+    }
+}
+
 public struct QuotaData: Codable {
     var kimi: KimiQuota?
     var codex: CodexQuota?
-    var updatedAt: Date?        // last read ATTEMPT
-    var kimiUpdatedAt: Date?    // last time `kimi` actually came from the API
-    var codexUpdatedAt: Date?   // last time `codex.windows` actually came from the API
+    var openCode: OpenCodeQuota?
+    var updatedAt: Date?             // last read ATTEMPT
+    var kimiUpdatedAt: Date?         // last time `kimi` actually came from the API
+    var codexUpdatedAt: Date?        // last time `codex.windows` actually came from the API
+    var openCodeUpdatedAt: Date?     // last time `openCode` actually came from the API
     var kimiError: String?
     var error: String?
 }
@@ -172,6 +238,7 @@ public class QuotaReader: Reader<QuotaData> {
         var kimi: KimiQuota?
         var kimiErr: String?
         var codex: CodexQuota?
+        var openCode: OpenCodeQuota?
 
         group.enter()
         self.fetchKimi { q, err in
@@ -183,6 +250,12 @@ public class QuotaReader: Reader<QuotaData> {
         group.enter()
         self.fetchCodex { c in
             codex = c
+            group.leave()
+        }
+
+        group.enter()
+        self.fetchOpenCode { o in
+            openCode = o
             group.leave()
         }
 
@@ -223,15 +296,28 @@ public class QuotaReader: Reader<QuotaData> {
                 data.codex = codex
             }
 
-            if data.kimi == nil, data.codex?.windows.isEmpty ?? true {
-                data.error = kimiErr ?? data.codex?.error
+            // OpenCode Go: same keep-last-good rule, keyed on any parsed window.
+            if let openCode, openCode.hasAnyWindow {
+                data.openCode = openCode
+                data.openCodeUpdatedAt = data.updatedAt
+            } else if let old = previous?.openCode, old.hasAnyWindow {
+                var merged = old
+                merged.error = openCode?.error
+                data.openCode = merged
+                data.openCodeUpdatedAt = previous?.openCodeUpdatedAt
+            } else {
+                data.openCode = openCode
+            }
+
+            if data.kimi == nil, data.codex?.windows.isEmpty ?? true, !(data.openCode?.hasAnyWindow ?? false) {
+                data.error = kimiErr ?? data.codex?.error ?? data.openCode?.error
             }
             self.callback(data)
 
             // Reader's own DB write is throttled to interval*10 (5h at a 30-minute
             // interval), which would leave a cold launch showing "—". Persist every
             // successful round so a restart starts from the last known numbers.
-            if kimi != nil || !(codex?.windows.isEmpty ?? true) {
+            if kimi != nil || !(codex?.windows.isEmpty ?? true) || (openCode?.hasAnyWindow ?? false) {
                 self.save(data)
             }
         }
@@ -449,6 +535,104 @@ public class QuotaReader: Reader<QuotaData> {
         } else if !skipped.isEmpty {
             debug("Codex windows present but unparseable: \(skipped.joined(separator: ", "))", log: self.log)
         }
+    }
+
+    // MARK: OpenCode Go (opencode.ai Zen) quota
+
+    /// Reads the Go API key from OpenCode's own auth store. OpenCode owns the
+    /// file — like Codex's auth.json, we only read it, never write back.
+    private func readOpenCodeKey() -> String? {
+        let url = URL(fileURLWithPath: NSHomeDirectory())
+            .appendingPathComponent(".local/share/opencode/auth.json")
+        guard let data = try? Data(contentsOf: url),
+              let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let entry = dict["opencode-go"] as? [String: Any],
+              let key = entry["key"] as? String, !key.isEmpty else {
+            return nil
+        }
+        return key
+    }
+
+    private func fetchOpenCode(completion: @escaping (OpenCodeQuota) -> Void) {
+        var result = OpenCodeQuota()
+        let enableOpenCode = Store.shared.bool(key: "\(self.title)_enableOpenCode", defaultValue: true)
+        guard enableOpenCode else {
+            completion(result)
+            return
+        }
+
+        guard let key = self.readOpenCodeKey() else {
+            result.error = "未找到 OpenCode Go 凭据 (~/.local/share/opencode/auth.json)"
+            completion(result)
+            return
+        }
+
+        guard let url = URL(string: "https://opencode.ai/zen/go/v1/usage") else {
+            result.error = "Invalid OpenCode usage endpoint"
+            completion(result)
+            return
+        }
+
+        var req = URLRequest(url: url)
+        req.httpMethod = "GET"
+        req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        // Custom UA on purpose: Cloudflare's bot rule (error 1010) blocks
+        // library-default fingerprints on this endpoint. A product-specific UA
+        // also matches OpenCode's docs guidance for API clients.
+        req.setValue("stats-quota/1.0", forHTTPHeaderField: "User-Agent")
+        req.setValue("application/json", forHTTPHeaderField: "Accept")
+
+        self.session.dataTask(with: req) { data, resp, err in
+            if let err {
+                result.error = "OpenCode 网络错误: \(err.localizedDescription)"
+                completion(result)
+                return
+            }
+            guard let http = resp as? HTTPURLResponse else {
+                result.error = "OpenCode 无响应"
+                completion(result)
+                return
+            }
+            if http.statusCode == 401 || http.statusCode == 403 {
+                result.error = "OpenCode Go API Key 无效 (HTTP \(http.statusCode))"
+                completion(result)
+                return
+            }
+            guard http.statusCode == 200 else {
+                result.error = "OpenCode HTTP \(http.statusCode)"
+                completion(result)
+                return
+            }
+            guard let data,
+                  let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let usage = dict["usage"] as? [String: Any] else {
+                result.error = "OpenCode 响应解析失败（无 usage 字段）"
+                completion(result)
+                return
+            }
+
+            func window(_ name: String) -> (Double?, Date?) {
+                guard let w = usage[name] as? [String: Any] else { return (nil, nil) }
+                let pct = Self.toDouble(w["percent"])
+                let resetAt = QuotaCountdownFormatter.date(fromISO8601: w["resetsAt"] as? String)
+                return (pct, resetAt)
+            }
+
+            let (roll, rollAt) = window("rolling")
+            let (week, weekAt) = window("weekly")
+            let (month, monthAt) = window("monthly")
+            result.rollingUsedPercent = roll
+            result.rollingResetAt = rollAt
+            result.weeklyUsedPercent = week
+            result.weeklyResetAt = weekAt
+            result.monthlyUsedPercent = month
+            result.monthlyResetAt = monthAt
+
+            if !result.hasAnyWindow {
+                result.error = "OpenCode 未返回任何额度窗口"
+            }
+            completion(result)
+        }.resume()
     }
 
     // MARK: Codex token helpers

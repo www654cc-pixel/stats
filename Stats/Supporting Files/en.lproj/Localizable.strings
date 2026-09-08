@@ -586,6 +586,12 @@
 "Quota Kimi weekly" = "Kimi weekly";
 "Quota Codex 5h" = "Codex 5h";
 "Quota Codex weekly" = "Codex weekly";
+"Quota OpenCode 5h" = "Go 5h";
+"Quota OpenCode weekly" = "Go weekly";
+"Quota OpenCode monthly" = "Go monthly";
+"Quota provider Kimi" = "Kimi";
+"Quota provider Codex" = "Codex";
+"Quota provider OpenCode" = "Go";
 "Quota countdown imminent" = "resets soon";
 "Quota countdown minute" = "%0 min";
 "Quota countdown under minute" = "<1 min";

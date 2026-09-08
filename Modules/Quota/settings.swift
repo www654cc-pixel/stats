@@ -10,6 +10,7 @@ internal class Settings: NSStackView, Settings_v, NSTextFieldDelegate {
     private let title: String
     private var kimiApiKey: String = ""
     private var enableCodexState: Bool = true
+    private var enableOpenCodeState: Bool = true
     private var updateIntervalValue: Int = 1800
 
     public var callback: (() -> Void) = {}
@@ -22,6 +23,7 @@ internal class Settings: NSStackView, Settings_v, NSTextFieldDelegate {
 
         self.kimiApiKey = Store.shared.string(key: "\(self.title)_kimiApiKey", defaultValue: "")
         self.enableCodexState = Store.shared.bool(key: "\(self.title)_enableCodex", defaultValue: true)
+        self.enableOpenCodeState = Store.shared.bool(key: "\(self.title)_enableOpenCode", defaultValue: true)
         self.updateIntervalValue = Store.shared.int(key: "\(self.title)_updateInterval", defaultValue: 1800)
 
         super.init(frame: NSRect.zero)
@@ -50,6 +52,10 @@ internal class Settings: NSStackView, Settings_v, NSTextFieldDelegate {
                 action: #selector(self.toggleCodex),
                 state: self.enableCodexState
             )),
+            PreferencesRow("启用 OpenCode Go 额度", component: switchView(
+                action: #selector(self.toggleOpenCode),
+                state: self.enableOpenCodeState
+            )),
             PreferencesRow("刷新间隔", component: selectView(
                 action: #selector(self.changeUpdateInterval),
                 items: [
@@ -65,7 +71,9 @@ internal class Settings: NSStackView, Settings_v, NSTextFieldDelegate {
 
         self.addArrangedSubview(PreferencesSection([
             PreferencesRow("Codex 凭据来源",
-                component: label("自动读取 ~/.codex/auth.json"))
+                component: label("自动读取 ~/.codex/auth.json")),
+            PreferencesRow("OpenCode Go 凭据来源",
+                component: label("自动读取 ~/.local/share/opencode/auth.json"))
         ]))
     }
 
@@ -108,6 +116,12 @@ internal class Settings: NSStackView, Settings_v, NSTextFieldDelegate {
     @objc private func toggleCodex(_ sender: NSSwitch) {
         self.enableCodexState = sender.state == .on
         Store.shared.set(key: "\(self.title)_enableCodex", value: self.enableCodexState)
+        self.callback()
+    }
+
+    @objc private func toggleOpenCode(_ sender: NSSwitch) {
+        self.enableOpenCodeState = sender.state == .on
+        Store.shared.set(key: "\(self.title)_enableOpenCode", value: self.enableOpenCodeState)
         self.callback()
     }
 
