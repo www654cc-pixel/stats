@@ -487,7 +487,7 @@ private class Popup: NSStackView, Popup_p {
         if dashboard {
             self.addArrangedSubview(self.topBar(width: width))
 
-            self.tiles.rebuild(width: width)
+            self.tiles.rebuild(width: width, gap: spacing)
             if !self.tiles.isEmpty {
                 self.tiles.refresh()
                 self.addArrangedSubview(self.tiles)

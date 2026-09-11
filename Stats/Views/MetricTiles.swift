@@ -174,7 +174,7 @@ internal class MetricTilesGrid: NSStackView {
 
     var isEmpty: Bool { self.tiles.isEmpty }
 
-    func rebuild(width: CGFloat) {
+    func rebuild(width: CGFloat, gap: CGFloat = 8) {
         self.subviews.forEach { $0.removeFromSuperview() }
         self.tiles = [:]
 
@@ -186,6 +186,7 @@ internal class MetricTilesGrid: NSStackView {
         } else {
             self.widthConstraint?.constant = width
         }
+        self.spacing = gap
 
         let active = MetricTilesGrid.specs.filter { spec in
             modules.contains(where: { $0.name == spec.name && $0.enabled })
@@ -206,7 +207,7 @@ internal class MetricTilesGrid: NSStackView {
                 rowTiles = []
                 row = NSStackView()
                 row?.orientation = .horizontal
-                row?.spacing = self.spacing
+                row?.spacing = gap
                 row?.distribution = .fillEqually
                 row?.heightAnchor.constraint(equalToConstant: MetricTilesGrid.tileHeight).isActive = true
                 self.addArrangedSubview(row!)
@@ -235,7 +236,7 @@ internal class MetricTilesGrid: NSStackView {
         }
 
         let rows = ceil(Double(active.count) / Double(columns))
-        let height = CGFloat(rows) * MetricTilesGrid.tileHeight + CGFloat(rows - 1) * self.spacing
+        let height = CGFloat(rows) * MetricTilesGrid.tileHeight + CGFloat(rows - 1) * gap
         if self.heightConstraint == nil {
             self.heightConstraint = self.heightAnchor.constraint(equalToConstant: height)
             self.heightConstraint?.isActive = true
@@ -463,19 +464,22 @@ internal class MetricTile: NSStackView {
         self.valueField.setContentHuggingPriority(.defaultLow, for: .horizontal)
         self.valueField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         self.addArrangedSubview(self.valueField)
-        self.setCustomSpacing(5, after: self.valueField)
 
         switch viz {
         case .bar:
+            self.setCustomSpacing(5, after: self.valueField)
             self.bar.heightAnchor.constraint(equalToConstant: 4).isActive = true
             self.addArrangedSubview(self.bar)
             self.bar.widthAnchor.constraint(equalTo: self.widthAnchor, constant: -28).isActive = true
             self.setCustomSpacing(4, after: self.bar)
         case .sparkline:
+            // the 10pt sparkline with its tighter gaps keeps the secondary row
+            // at the same +13pt offset the 4pt bar tiles use
+            self.setCustomSpacing(2, after: self.valueField)
             self.spark.heightAnchor.constraint(equalToConstant: 10).isActive = true
             self.addArrangedSubview(self.spark)
             self.spark.widthAnchor.constraint(equalTo: self.widthAnchor, constant: -28).isActive = true
-            self.setCustomSpacing(4, after: self.spark)
+            self.setCustomSpacing(1, after: self.spark)
         }
 
         // secondary row: 10pt tertiary, left/right split
