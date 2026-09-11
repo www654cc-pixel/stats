@@ -626,7 +626,6 @@
 "Honcho memory status" = "Honcho 记忆系统状态";
 
 "Overview remaining quota" = "剩余额度";
-"Overview quota reset" = "距重置";
 "Overview battery charging" = "充入 %0";
 "Overview battery discharging" = "输出 %0";
 "Overview battery idle" = "未充电";
@@ -638,10 +637,6 @@
 
 "Proxy current connection" = "当前连接";
 "Dashboard overview" = "总览";
-"Dashboard device subtitle" = "实时设备状态";
-"Dashboard planning subtitle" = "时间安排与可用额度";
-"Dashboard device tab" = "设备与网络";
-"Dashboard planning tab" = "日程与额度";
 
 "Kimi Code" = "Kimi Code";
 "Start Kimi Code server" = "启动 Kimi Code 服务";

@@ -629,7 +629,6 @@
 "Honcho memory status" = "Honcho memory status";
 
 "Overview remaining quota" = "Remaining quota";
-"Overview quota reset" = "Resets in";
 "Overview battery charging" = "Charging %0";
 "Overview battery discharging" = "Discharging %0";
 "Overview battery idle" = "Not charging";
@@ -641,10 +640,6 @@
 
 "Proxy current connection" = "Connected via";
 "Dashboard overview" = "Overview";
-"Dashboard device subtitle" = "Live system status";
-"Dashboard planning subtitle" = "Time and available capacity";
-"Dashboard device tab" = "Device & Network";
-"Dashboard planning tab" = "Schedule & Quotas";
 
 "Kimi Code" = "Kimi Code";
 "Start Kimi Code server" = "Start the Kimi Code server";

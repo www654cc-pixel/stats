@@ -14,22 +14,22 @@ All are part of the "Combined modules" single-icon dashboard: the menu bar colla
 to one icon (`CombinedModules_icon` store key) showing live system power; clicking it
 opens a wide overview panel (`Popup` in `Stats/Views/CombinedView.swift`).
 
-- **Overview panel** (`Stats/Views/CombinedView.swift`): a compact ~972 pt,
-  three-column dashboard with summary tiles (power / CPU / memory pressure /
-  temperature), a hero power-flow card, six-week calendar, quota and world-clock
-  groups, plus a 62:38 proxy/launcher row. The transparent borderless popup has no
-  outer glass container: primary data surfaces use native `.regular` Liquid Glass,
-  secondary controls use `.clear`, and fixed 22/28 pt corner radii keep the visual
-  hierarchy consistent. Activity Monitor and Settings actions live in the hero.
-- **Power-flow sankey card** (`Stats/Views/PowerFlowPortal.swift`): adapter/battery →
-  Mac → CPU/GPU/Display/Others energy-flow diagram with battery level bar, charge
-  status + health chips, and top-3 CPU-consuming processes (via libproc
-  `proc_pid_rusage`, not `top`). Three
-  layouts: charging, on battery, battery-assist (adapter can't keep up). Custom
-  drawing in `PowerSankeyView` (flipped coords, bezier ribbons).
+- **Overview panel** (`Stats/Views/CombinedView.swift`): a single-page ~972 pt
+  dashboard — top bar (title + Kimi server switch), six metric tiles, the power
+  card beside the world clock, the calendar beside the 2x2 quota grid, and a
+  full-width proxy card. No pages, no scrolling: everything is visible at once.
+  The transparent borderless popup has no outer glass container: primary data
+  surfaces use native `.regular` Liquid Glass, secondary controls use `.clear`,
+  and a fixed 22 pt corner radius keeps the visual hierarchy consistent.
+  Activity Monitor and Settings actions live in the power card header.
+- **Power card** (`Stats/Views/PowerFlowPortal.swift`): the system-power hero —
+  total watts, live charger input with the negotiated PD tier, battery level bar
+  with health text in the column, and a CPU/GPU/display/other breakdown —
+  alongside a charge-status chip and a lid sleep-avoidance toggle that only
+  enables on external power. The top CPU process sits in the battery caption's
+  tooltip (via libproc `proc_pid_rusage`, not `top`).
 - **Proxy panel** (`Stats/Views/ProxyPortal.swift`): mihomo REST API at
   `127.0.0.1:9090`, node switching, latency, live speed. Auto-hides when unreachable.
-- **Launcher panel** (`Stats/Views/LauncherPortal.swift`): user-selected app shortcuts.
 - **Cross-module snapshots**: modules expose latest values to the Stats app target via
   protocols in `Kit/module/portal.swift` (`CombinedCPUPortal`, `CombinedRAMPortal`,
   `CombinedSensorsPortal` + `PowerFlowReading`). The Stats app target does NOT link
