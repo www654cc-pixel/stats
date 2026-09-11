@@ -635,7 +635,6 @@ private class Popup: NSStackView, Popup_p {
 // data can never clip.
 private class InfoStrip: NSStackView {
     static let compactHeight: CGFloat = 62
-    static let sidebarFixedHeight: CGFloat = 288
 
     private var quotaSource: CombinedQuotaPortal?
     private var providerRows: [QuotaProviderRow] = []
@@ -644,9 +643,10 @@ private class InfoStrip: NSStackView {
     private var quotaBox: NSStackView?
     private var quotaSection: NSStackView?
     private var quotaHeader: NSView?
+    private var quotaHeaderHeight: NSLayoutConstraint?
     private var quotaColumnHeader: NSStackView?
     private var quotaWidthConstraint: NSLayoutConstraint?
-    private var groupedWidths: [NSLayoutConstraint] = []
+    private var gridWidths: [NSLayoutConstraint] = []
     private var clockWidthConstraint: NSLayoutConstraint?
     private var heightConstraint: NSLayoutConstraint?
     private var sidebarMode: Bool = false
@@ -686,7 +686,8 @@ private class InfoStrip: NSStackView {
         quotaHeader.orientation = .horizontal
         quotaHeader.alignment = .centerY
         quotaHeader.spacing = 5
-        quotaHeader.heightAnchor.constraint(equalToConstant: 18).isActive = true
+        self.quotaHeaderHeight = quotaHeader.heightAnchor.constraint(equalToConstant: 18)
+        self.quotaHeaderHeight?.isActive = true
         quotaHeader.setContentCompressionResistancePriority(.required, for: .vertical)
         let quotaIcon = NSImageView()
         quotaIcon.image = NSImage(systemSymbolName: "gauge.with.dots.needle.33percent", accessibilityDescription: nil)
@@ -698,10 +699,6 @@ private class InfoStrip: NSStackView {
         quotaHeader.addArrangedSubview(quotaIcon)
         quotaHeader.addArrangedSubview(quotaLabel)
         quotaHeader.addArrangedSubview(NSView())
-        let resetLabel = NSTextField(labelWithString: localizedString("Overview quota reset"))
-        resetLabel.font = Design.subFont
-        resetLabel.textColor = Design.mutedTextColor
-        quotaHeader.addArrangedSubview(resetLabel)
         quotaSection.addArrangedSubview(quotaHeader)
 
         // The progress bars are a three-window comparison, rather than three
@@ -750,13 +747,10 @@ private class InfoStrip: NSStackView {
             q.addArrangedSubview(row)
         }
         quotaSection.addArrangedSubview(q)
-        // Dashboard (sidebar) layout: grouped by provider, one line per real
-        // window. Kimi/Codex report two windows, Go three — no empty tracks.
-        let grouped = NSStackView()
-        grouped.orientation = .vertical
-        grouped.alignment = .width
-        grouped.distribution = .fill
-        grouped.spacing = 8
+        // Dashboard layout: two rows of two provider blocks — the proven
+        // grid pattern (explicit equal widths & heights; fillEqually degrades
+        // when content demands more width, so widths are pinned instead).
+        // Kimi 1 / Kimi 2 on the first row, Codex / Go on the second.
         let windowTitles = [
             localizedString("Quota window short"),
             localizedString("Quota window week"),
@@ -764,13 +758,33 @@ private class InfoStrip: NSStackView {
         ]
         for provider in QuotaProvider.allCases {
             let titles = provider == .openCode ? windowTitles : Array(windowTitles.prefix(2))
-            let group = QuotaGroupView(providerLabel: provider.label, windowTitles: titles)
-            self.quotaGroups.append(group)
-            grouped.addArrangedSubview(group)
+            self.quotaGroups.append(QuotaGroupView(providerLabel: provider.label, windowTitles: titles))
         }
-        grouped.isHidden = true
-        quotaSection.addArrangedSubview(grouped)
-        self.groupedBox = grouped
+        func makeRow(_ pair: [QuotaGroupView]) -> NSStackView {
+            let row = NSStackView(views: pair)
+            row.orientation = .horizontal
+            row.alignment = .top
+            row.distribution = .fill
+            row.spacing = 26
+            return row
+        }
+        let gridBox = NSStackView(views: [
+            makeRow([self.quotaGroups[0], self.quotaGroups[1]]),
+            makeRow([self.quotaGroups[2], self.quotaGroups[3]])
+        ])
+        gridBox.orientation = .vertical
+        gridBox.alignment = .width
+        gridBox.distribution = .fill
+        gridBox.spacing = 8
+        // every block shares the top-left block's width & height (assigned in
+        // setWidth); the grid itself is pinned to the card content width
+        for group in self.quotaGroups.dropFirst() {
+            group.widthAnchor.constraint(equalTo: self.quotaGroups[0].widthAnchor).isActive = true
+            group.heightAnchor.constraint(equalTo: self.quotaGroups[0].heightAnchor).isActive = true
+        }
+        gridBox.isHidden = true
+        quotaSection.addArrangedSubview(gridBox)
+        self.groupedBox = gridBox
 
         // tall sidebar mode: let the leftover height pool at the bottom instead
         // of stretching a random internal view (distribution .fill otherwise
@@ -819,6 +833,7 @@ private class InfoStrip: NSStackView {
         self.spacing = sidebar ? Design.gap : 10
         self.edgeInsets = NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
         self.heightConstraint?.constant = height
+        self.quotaHeaderHeight?.constant = sidebar ? 24 : 18
         self.quotaHeader?.isHidden = !sidebar
         // the 5h/周/月 column header belongs to the compact column grid; the
         // dashboard uses the per-provider grouped list instead
@@ -842,19 +857,24 @@ private class InfoStrip: NSStackView {
             self.clockWidthConstraint = self.clockBox?.widthAnchor.constraint(equalToConstant: width)
             self.quotaWidthConstraint?.isActive = true
             self.clockWidthConstraint?.isActive = true
-            // gravity-area stacks keep their intrinsic width, so the grouped
-            // list and every provider block are pinned to the card content
-            // width (card − 13pt insets each side)
-            self.groupedWidths.forEach { $0.isActive = false }
-            self.groupedWidths = []
+            // 2x2 grid geometry: the card height drives the block height
+            // (grid = height − 58 → 22 insets + 24 header + two 6pt spacings;
+            // rows = grid − 8), so a provider row-count change can never clip.
             let contentWidth = width - 26
-            if let box = self.groupedBox {
-                self.groupedWidths.append(box.widthAnchor.constraint(equalToConstant: contentWidth))
+            let columnWidth = (contentWidth - 26) / 2
+            let gridHeight = height - 58
+            let rowHeight = (gridHeight - 8) / 2
+            self.gridWidths.forEach { $0.isActive = false }
+            self.gridWidths = []
+            if let box = self.groupedBox, let first = self.quotaGroups.first {
+                self.gridWidths = [
+                    box.widthAnchor.constraint(equalToConstant: contentWidth),
+                    box.heightAnchor.constraint(equalToConstant: gridHeight),
+                    first.widthAnchor.constraint(equalToConstant: columnWidth),
+                    first.heightAnchor.constraint(equalToConstant: rowHeight),
+                ]
             }
-            for group in self.quotaGroups {
-                self.groupedWidths.append(group.widthAnchor.constraint(equalToConstant: contentWidth))
-            }
-            self.groupedWidths.forEach { $0.isActive = true }
+            self.gridWidths.forEach { $0.isActive = true }
         } else {
             self.quotaWidthConstraint = self.quotaSection?.widthAnchor.constraint(equalToConstant: width * 0.46)
             self.quotaWidthConstraint?.isActive = true
@@ -905,7 +925,7 @@ private class InfoStrip: NSStackView {
             // keeps its fixed tall context height managed by setWidth.
             if !self.sidebarMode {
                 let visible = max(self.providerRows.filter { !$0.isHidden }.count, 1)
-                self.heightConstraint?.constant = QuotaRowMetrics.stripHeight(visibleRows: visible, sidebar: false)
+                self.heightConstraint?.constant = QuotaRowMetrics.stripHeight(visibleRows: visible)
             }
         } else {
             self.quotaSection?.isHidden = true
@@ -1346,8 +1366,7 @@ private enum QuotaRowMetrics {
     static let headerHeight: CGFloat = 14
     static let insets: CGFloat = 9 * 2      // strip edge insets (top+bottom)
 
-    static func stripHeight(visibleRows: Int, sidebar: Bool) -> CGFloat {
-        if sidebar { return InfoStrip.sidebarFixedHeight }
+    static func stripHeight(visibleRows: Int) -> CGFloat {
         let content = CGFloat(max(visibleRows, 1)) * rowHeight
             + CGFloat(max(visibleRows, 1) - 1) * rowSpacing
             + headerHeight
@@ -1388,7 +1407,7 @@ private class QuotaWindowRow: NSStackView {
 
         self.valueField.font = .monospacedDigitSystemFont(ofSize: 11, weight: .semibold)
         self.valueField.alignment = .right
-        self.valueField.widthAnchor.constraint(equalToConstant: 34).isActive = true
+        self.valueField.widthAnchor.constraint(equalToConstant: 38).isActive = true
 
         self.countdownField.font = .monospacedDigitSystemFont(ofSize: 9.5, weight: .medium)
         self.countdownField.textColor = Design.mutedTextColor
@@ -1400,10 +1419,11 @@ private class QuotaWindowRow: NSStackView {
         self.addArrangedSubview(self.bar)
         self.addArrangedSubview(self.valueField)
         self.addArrangedSubview(self.countdownField)
-        // 18pt per line × 7 windows + 3 provider titles fits the 240pt card
-        // (matching the calendar beside it); 20pt rows overflowed it and the
-        // provider titles were squeezed to 5pt and 0pt.
-        self.heightAnchor.constraint(equalToConstant: 18).isActive = true
+        // 20pt per line. In the 2x2 dashboard grid the block height is fixed
+        // (101pt) and the rows spread via equal spacers, so the old "18pt ×
+        // 7 lines fits the card" arithmetic no longer applies — 20pt rows are
+        // safe and match the approved mockup.
+        self.heightAnchor.constraint(equalToConstant: 20).isActive = true
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -1452,11 +1472,13 @@ private class QuotaGroupView: NSStackView {
 
         self.orientation = .vertical
         self.alignment = .width
-        // NOT .fill: filling along the vertical axis squeezes the provider
-        // title's intrinsic 14pt line to 5pt (and 0pt on the tallest group).
-        // Gravity areas keep every subview at its natural height.
-        self.distribution = .gravityAreas
-        self.spacing = 2
+        // Rows spread evenly across the block height (space-evenly): flexible
+        // spacers, all equal height, above the first row and after every row.
+        // The title hugs at .required so surplus height lands in the spacers
+        // instead of inflating the 14pt title line (the old gravity-area
+        // stack failed the opposite way — compression squeezed it to 5pt).
+        self.distribution = .fill
+        self.spacing = 0
 
         let title = NSTextField(labelWithString: providerLabel)
         title.font = .systemFont(ofSize: 11, weight: .semibold)
@@ -1471,13 +1493,28 @@ private class QuotaGroupView: NSStackView {
         title.widthAnchor.constraint(equalTo: self.widthAnchor).isActive = true
         // the provider name is the row's only label — never let it shrink
         title.setContentCompressionResistancePriority(.required, for: .vertical)
-        self.setCustomSpacing(2, after: title)
-        self.rows.forEach {
-            self.addArrangedSubview($0)
-            // the enclosing stacks lay out with gravity areas, which keeps
-            // subviews at their intrinsic width — pin every row to the group
-            // width so the bar can actually stretch
-            $0.widthAnchor.constraint(equalTo: self.widthAnchor).isActive = true
+        title.setContentHuggingPriority(.required, for: .vertical)
+
+        func makeSpacer() -> NSView {
+            let spacer = NSView()
+            spacer.setContentHuggingPriority(.defaultLow, for: .vertical)
+            spacer.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
+            return spacer
+        }
+        var spacers: [NSView] = []
+        let topSpacer = makeSpacer()
+        spacers.append(topSpacer)
+        self.addArrangedSubview(topSpacer)
+        self.rows.forEach { row in
+            self.addArrangedSubview(row)
+            // pin every row to the group width so the bar can stretch
+            row.widthAnchor.constraint(equalTo: self.widthAnchor).isActive = true
+            let spacer = makeSpacer()
+            spacers.append(spacer)
+            self.addArrangedSubview(spacer)
+        }
+        for spacer in spacers.dropFirst() {
+            spacer.heightAnchor.constraint(equalTo: spacers[0].heightAnchor).isActive = true
         }
     }
 
