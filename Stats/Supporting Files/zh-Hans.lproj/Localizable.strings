@@ -608,7 +608,9 @@
 "Proxy node traffic" = "节点 · 本月 %0 · 今日 %1";
 "Proxy conn detail" = "%0 直连 · %1 代理";
 "Proxy updated" = "更新于 %0";
-"Proxy VPS day" = "今日 %0";
+"Proxy traffic month" = "本月 %0";
+"Proxy traffic today" = "今日 %0";
+"Proxy switch node" = "切换节点";
 "VPS traffic loading" = "VPS全局 · 获取中";
 "VPS traffic stale" = "VPS全局 · 数据陈旧";
 "VPS traffic unavailable" = "VPS全局 · 暂时不可用";
@@ -633,3 +635,5 @@
 "Proxy mode rule" = "规则";
 "Proxy mode global" = "全局";
 "Proxy mode direct" = "直连";
+
+"Proxy current connection" = "当前连接";

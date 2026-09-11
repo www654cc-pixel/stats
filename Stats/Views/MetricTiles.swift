@@ -601,7 +601,7 @@ internal class MetricTile: NSStackView {
 
 // MARK: - micro visualizations
 
-private class TileBarView: NSView {
+internal class TileBarView: NSView {
     private var fraction: Double = 0
     private var color: NSColor = .systemBlue
 
@@ -631,10 +631,11 @@ private class TileBarView: NSView {
     }
 }
 
-private class TileSparklineView: NSView {
+internal class TileSparklineView: NSView {
     private var down: [Double] = []
     private var up: [Double] = []
     private let capacity = 60
+    var downColor: NSColor = .systemBlue
 
     func push(down: Double, up: Double) {
         self.down.append(down)
@@ -665,7 +666,7 @@ private class TileSparklineView: NSView {
         }
 
         line(self.up, NSColor.systemGray.withAlphaComponent(0.7))
-        line(self.down, .systemBlue)
+        line(self.down, self.downColor)
     }
 }
 
@@ -686,8 +687,8 @@ internal extension NSView {
     func applyCardStyle() {
         let liquidRadius: CGFloat = {
             if self is MetricTile { return 22 }
-            if self is ProxyPortal { return 20 }
-            return 28
+            if self is ProxyPortal { return 22 }
+            return 22
         }()
 
         if #available(macOS 26.0, *) {

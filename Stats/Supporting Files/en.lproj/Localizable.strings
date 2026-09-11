@@ -611,7 +611,9 @@
 "Proxy node traffic" = "Node · month %0 · today %1";
 "Proxy conn detail" = "%0 direct · %1 proxied";
 "Proxy updated" = "Updated %0";
-"Proxy VPS day" = "Today %0";
+"Proxy traffic month" = "This month %0";
+"Proxy traffic today" = "Today %0";
+"Proxy switch node" = "Switch node";
 "VPS traffic loading" = "VPS global · loading";
 "VPS traffic stale" = "VPS global · stale data";
 "VPS traffic unavailable" = "VPS global · temporarily unavailable";
@@ -636,3 +638,5 @@
 "Proxy mode rule" = "Rule";
 "Proxy mode global" = "Global";
 "Proxy mode direct" = "Direct";
+
+"Proxy current connection" = "Connected via";
