@@ -640,3 +640,16 @@
 "Proxy mode direct" = "Direct";
 
 "Proxy current connection" = "Connected via";
+"Dashboard overview" = "Overview";
+"Dashboard device subtitle" = "Live system status";
+"Dashboard planning subtitle" = "Time and available capacity";
+"Dashboard device tab" = "Device & Network";
+"Dashboard planning tab" = "Schedule & Quotas";
+
+"Kimi Code" = "Kimi Code";
+"Start Kimi Code server" = "Start the Kimi Code server";
+"Stop Kimi Code server and free its memory" = "Quit the Kimi Code server and free its memory";
+"Open Kimi web UI" = "Open the Kimi web UI";
+"Kimi Code is starting…" = "Kimi Code server is starting…";
+"Kimi Code is stopping…" = "Kimi Code server is quitting…";
+"Kimi Code failed" = "Kimi Code: the switch failed";

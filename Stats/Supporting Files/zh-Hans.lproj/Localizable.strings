@@ -637,3 +637,16 @@
 "Proxy mode direct" = "直连";
 
 "Proxy current connection" = "当前连接";
+"Dashboard overview" = "总览";
+"Dashboard device subtitle" = "实时设备状态";
+"Dashboard planning subtitle" = "时间安排与可用额度";
+"Dashboard device tab" = "设备与网络";
+"Dashboard planning tab" = "日程与额度";
+
+"Kimi Code" = "Kimi Code";
+"Start Kimi Code server" = "启动 Kimi Code 服务";
+"Stop Kimi Code server and free its memory" = "退出 Kimi Code 服务并释放内存";
+"Open Kimi web UI" = "打开 Kimi 网页界面";
+"Kimi Code is starting…" = "Kimi Code 服务正在启动…";
+"Kimi Code is stopping…" = "Kimi Code 服务正在退出…";
+"Kimi Code failed" = "Kimi Code 开关操作失败";
