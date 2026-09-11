@@ -394,7 +394,6 @@ private class Popup: NSStackView, Popup_p {
     private let infoStrip: InfoStrip = InfoStrip()
     private let clockCard: ClockCard = ClockCard()
     private var refreshTimer: Timer?
-    private var dashboardPage = 0
 
     init() {
         self.keyboardShortcut = Store.shared.array(key: "CombinedModules_popup_keyboardShortcut", defaultValue: []) as? [UInt16] ?? []
@@ -486,47 +485,44 @@ private class Popup: NSStackView, Popup_p {
         self.clockCard.refresh()
 
         if dashboard {
-            self.addArrangedSubview(self.dashboardNavigation(width: width))
-            if self.dashboardPage == 0 {
-                self.tiles.rebuild(width: width)
-                if !self.tiles.isEmpty {
-                    self.tiles.refresh()
-                    self.addArrangedSubview(self.tiles)
-                }
+            self.addArrangedSubview(self.topBar(width: width))
 
-                self.power.setWidth(width * 0.64 - spacing)
-                self.power.isHidden = !self.power.available
-                self.clockCard.setWidth(self.power.available ? width * 0.36 : width)
-                let energy = NSStackView(views: [self.power, self.clockCard])
-                energy.orientation = .horizontal
-                energy.alignment = .top
-                energy.spacing = spacing
-                self.addArrangedSubview(energy)
-
-                self.proxy.setWidth(width)
-                self.proxy.isHidden = !self.proxy.reachable
-                self.addArrangedSubview(self.proxy)
-            } else {
-                let calendarWidth = (width - spacing) * 0.38
-                let quotaWidth = width - spacing - calendarWidth
-                self.calendar.setSize(width: calendarWidth, height: nil)
-                self.calendar.refresh()
-                let calendarHeight = max(self.calendar.fittingSize.height, 268)
-                self.calendar.setSize(width: calendarWidth, height: calendarHeight)
-                self.clockCard.setWidth(calendarWidth)
-                let schedule = NSStackView(views: [self.clockCard, self.calendar])
-                schedule.orientation = .vertical
-                schedule.alignment = .width
-                schedule.spacing = spacing
-                self.infoStrip.setWidth(quotaWidth, sidebar: true,
-                                        height: calendarHeight + ClockCard.heroHeight + spacing,
-                                        clockVisible: false)
-                let context = NSStackView(views: [schedule, self.infoStrip])
-                context.orientation = .horizontal
-                context.alignment = .top
-                context.spacing = spacing
-                self.addArrangedSubview(context)
+            self.tiles.rebuild(width: width)
+            if !self.tiles.isEmpty {
+                self.tiles.refresh()
+                self.addArrangedSubview(self.tiles)
             }
+
+            // Row 2: energy — the power hero beside the world clock. Both
+            // cards carry their own 118pt height, so the row reads as a pair.
+            self.power.setWidth(648)
+            self.power.isHidden = !self.power.available
+            self.clockCard.setWidth(self.power.available ? width - spacing - 648 : width)
+            let energy = NSStackView(views: [self.power, self.clockCard])
+            energy.orientation = .horizontal
+            energy.alignment = .top
+            energy.spacing = spacing
+            self.addArrangedSubview(energy)
+
+            // Row 3: time & capacity — the calendar beside the 2x2 quota
+            // grid; the quota card follows the calendar height so the row
+            // stays flush (single source: contextHeight).
+            self.calendar.setSize(width: 369, height: nil)
+            self.calendar.refresh()
+            let contextHeight = max(self.calendar.fittingSize.height, 268)
+            self.calendar.setSize(width: 369, height: contextHeight)
+            self.infoStrip.setWidth(width - spacing - 369, sidebar: true,
+                                    height: contextHeight, clockVisible: false)
+            let context = NSStackView(views: [self.calendar, self.infoStrip])
+            context.orientation = .horizontal
+            context.alignment = .top
+            context.spacing = spacing
+            self.addArrangedSubview(context)
+
+            // Row 4: network — the proxy card keeps the full width
+            self.proxy.setWidth(width)
+            self.proxy.isHidden = !self.proxy.reachable
+            self.addArrangedSubview(self.proxy)
         } else {
             // Classic (non-dashboard) layout: keep the original compact arrangement
             self.power.setWidth(width)
@@ -600,7 +596,7 @@ private class Popup: NSStackView, Popup_p {
         }
     }
 
-    private func dashboardNavigation(width: CGFloat) -> NSView {
+    private func topBar(width: CGFloat) -> NSView {
         let bar = NSStackView()
         bar.orientation = .horizontal
         bar.alignment = .centerY
@@ -612,25 +608,8 @@ private class Popup: NSStackView, Popup_p {
         bar.heightAnchor.constraint(equalToConstant: 48).isActive = true
         let title = NSTextField(labelWithString: localizedString("Dashboard overview"))
         title.font = .systemFont(ofSize: 15, weight: .semibold)
-        let subtitle = NSTextField(labelWithString: localizedString(
-            self.dashboardPage == 0 ? "Dashboard device subtitle" : "Dashboard planning subtitle"))
-        subtitle.font = Design.labelFont
-        subtitle.textColor = Design.secondaryTextColor
-        let pages = NSSegmentedControl(labels: [localizedString("Dashboard device tab"),
-                                                localizedString("Dashboard planning tab")],
-                                       trackingMode: .selectOne, target: self,
-                                       action: #selector(self.changeDashboardPage(_:)))
-        pages.segmentStyle = .rounded
-        pages.selectedSegment = self.dashboardPage
-        pages.setContentHuggingPriority(.required, for: .horizontal)
-        for view in [title, subtitle, NSView(), pages, self.kimi] { bar.addArrangedSubview(view) }
+        for view in [title, NSView(), self.kimi] { bar.addArrangedSubview(view) }
         return bar
-    }
-
-    @objc private func changeDashboardPage(_ sender: NSSegmentedControl) {
-        guard sender.selectedSegment >= 0, sender.selectedSegment != self.dashboardPage else { return }
-        self.dashboardPage = sender.selectedSegment
-        self.reinit()
     }
 
     // size the stack to its real (constraint-driven) height so nothing gets compressed
