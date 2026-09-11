@@ -152,7 +152,7 @@ internal class PowerFlowPortal: NSStackView {
 
     private let titleField = NSTextField(labelWithString: localizedString("System Overview"))
     private let statusChip = PowerChip()
-    private let healthChip = PowerChip()
+    private let healthField = NSTextField(labelWithString: "")
     private let lidSleepChip = PowerChip()
     private let lidSleepButton = NSButton()
     private let lidSleepController = LidSleepController()
@@ -213,7 +213,6 @@ internal class PowerFlowPortal: NSStackView {
         header.addArrangedSubview(NSView())
         self.lidSleepChip.isHidden = true
         header.addArrangedSubview(self.lidSleepChip)
-        header.addArrangedSubview(self.healthChip)
         header.addArrangedSubview(self.statusChip)
         self.lidSleepButton.image = NSImage(systemSymbolName: "moon.zzz.fill", accessibilityDescription: localizedString("Prevent sleep when lid is closed"))
         self.lidSleepButton.symbolConfiguration = .init(pointSize: 10, weight: .semibold)
@@ -272,7 +271,15 @@ internal class PowerFlowPortal: NSStackView {
         let batteryLabel = NSTextField(labelWithString: localizedString("Battery"))
         batteryLabel.font = .systemFont(ofSize: 10.5, weight: .medium)
         batteryLabel.textColor = Design.secondaryTextColor
-        battery.addArrangedSubview(batteryLabel)
+        // battery health belongs to the battery column, not the card header
+        self.healthField.font = .systemFont(ofSize: 10.5, weight: .regular)
+        self.healthField.textColor = Design.mutedTextColor
+        self.healthField.alignment = .right
+        self.healthField.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        let batteryHeader = NSStackView(views: [batteryLabel, NSView(), self.healthField])
+        batteryHeader.orientation = .horizontal
+        batteryHeader.alignment = .firstBaseline
+        battery.addArrangedSubview(batteryHeader)
         self.levelBar.heightAnchor.constraint(equalToConstant: self.barHeight).isActive = true
         battery.addArrangedSubview(self.levelBar)
         self.infoField.font = .systemFont(ofSize: 10.5, weight: .regular)
@@ -610,7 +617,7 @@ internal class PowerFlowPortal: NSStackView {
     private func updateChips(_ model: PowerFlowModel) {
         guard model.hasBattery else {
             self.statusChip.isHidden = true
-            self.healthChip.isHidden = true
+            self.healthField.isHidden = true
             return
         }
 
@@ -644,10 +651,11 @@ internal class PowerFlowPortal: NSStackView {
         self.statusChip.isHidden = false
 
         if let health = model.health {
-            self.healthChip.set(text: "\(localizedString("Health")) \(health)%", symbol: "heart.fill", color: health >= 80 ? .systemGray : .systemOrange)
-            self.healthChip.isHidden = false
+            self.healthField.stringValue = "\(localizedString("Health")) \(health)%"
+            self.healthField.textColor = health >= 80 ? Design.mutedTextColor : .systemOrange
+            self.healthField.isHidden = false
         } else {
-            self.healthChip.isHidden = true
+            self.healthField.isHidden = true
         }
     }
 
