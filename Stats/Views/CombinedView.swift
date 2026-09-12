@@ -390,7 +390,8 @@ private class Popup: NSStackView, Popup_p {
     private let tiles: MetricTilesGrid = MetricTilesGrid()
     private let calendar: CalendarPortal = CalendarPortal()
     private let proxy: ProxyPortal = ProxyPortal()
-    private let kimi: KimiServerControl = KimiServerControl()
+    private let kimi: LocalServerControl = LocalServerControl(spec: .kimi)
+    private let deepseek: LocalServerControl = LocalServerControl(spec: .deepseek)
     private let infoStrip: InfoStrip = InfoStrip()
     private let clockCard: ClockCard = ClockCard()
     private var refreshTimer: Timer?
@@ -436,6 +437,7 @@ private class Popup: NSStackView, Popup_p {
         self.infoStrip.refresh()
         self.clockCard.refresh()
         self.kimi.refresh()
+        self.deepseek.refresh()
         self.refreshTimer?.invalidate()
         self.refreshTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             self?.tiles.refresh()
@@ -601,14 +603,20 @@ private class Popup: NSStackView, Popup_p {
         bar.orientation = .horizontal
         bar.alignment = .centerY
         bar.spacing = 12
-        bar.edgeInsets = NSEdgeInsets(top: 8, left: 16, bottom: 8, right: 12)
+        bar.edgeInsets = NSEdgeInsets(top: 8, left: 16, bottom: 8, right: 16)
         bar.wantsLayer = true
         bar.applyCardStyle()
         bar.widthAnchor.constraint(equalToConstant: width).isActive = true
         bar.heightAnchor.constraint(equalToConstant: 48).isActive = true
         let title = NSTextField(labelWithString: localizedString("Dashboard overview"))
         title.font = .systemFont(ofSize: 15, weight: .semibold)
-        for view in [title, NSView(), self.kimi] { bar.addArrangedSubview(view) }
+        // a hairline keeps the two server switches reading as separate controls
+        let divider = NSBox()
+        divider.boxType = .separator
+        divider.widthAnchor.constraint(equalToConstant: 1).isActive = true
+        divider.heightAnchor.constraint(equalToConstant: 18).isActive = true
+        divider.setContentHuggingPriority(.required, for: .horizontal)
+        for view in [title, NSView(), self.kimi, divider, self.deepseek] { bar.addArrangedSubview(view) }
         return bar
     }
 

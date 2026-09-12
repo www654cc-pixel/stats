@@ -1,12 +1,13 @@
 //
-//  KimiServerControl.swift
+//  LocalServerControl.swift
 //  Stats
 //
-//  Start/stop switch for the Kimi Code web server — the `com.kimi.server`
-//  LaunchAgent listening on 127.0.0.1:58627 — rendered at the trailing edge
-//  of the combined panel's navigation bar.
+//  Start/stop switches for the local "web UI" servers that run as per-user
+//  LaunchAgents — the Kimi Code server (`com.kimi.server`, 127.0.0.1:58627)
+//  and the DeepSeek Harness server (`com.deepseek.server`, 127.0.0.1:58628) —
+//  rendered at the trailing edge of the combined panel's navigation bar.
 //
-//  The job is declared with KeepAlive=true, so the process cannot be stopped
+//  The jobs are declared with KeepAlive=true, so a process cannot be stopped
 //  by signalling it: launchd would bring it back within a second. Toggling
 //  therefore goes through launchctl — stop is `disable` + `bootout`, start is
 //  `enable` + `bootstrap` — and no admin rights are involved because both the
@@ -16,7 +17,67 @@
 import Cocoa
 import Kit
 
-internal final class KimiServer {
+/// Everything that differs between the servers the panel can steer.
+internal struct LocalServerSpec {
+    /// How a server proves it is alive.
+    enum ProbeStyle {
+        /// GET `/<probePath>` answers 200 with a body (Kimi's meta API).
+        case jsonAPI
+        /// Any HTTP status means the port answers — DeepSeek's token fence
+        /// replies 401 to an unauthenticated `GET /`.
+        case anyResponse
+    }
+
+    let label: String
+    let port: Int
+    let titleKey: String
+    let startKey: String
+    let stopKey: String
+    let openKey: String
+    let startingKey: String
+    let stoppingKey: String
+    let failedKey: String
+    let probePath: String
+    let probeStyle: ProbeStyle
+    /// Servers that rotate their access token per launch print the Web UI
+    /// URL (including `?token=`) into this LaunchAgent log — the open button
+    /// reads the newest link from there instead of guessing.
+    let tokenLinkLogPath: String?
+
+    var baseURL: URL { URL(string: "http://127.0.0.1:\(self.port)/")! }
+
+    static let kimi = LocalServerSpec(
+        label: "com.kimi.server",
+        port: 58627,
+        titleKey: "Kimi Code",
+        startKey: "Start Kimi Code server",
+        stopKey: "Stop Kimi Code server and free its memory",
+        openKey: "Open Kimi web UI",
+        startingKey: "Kimi Code is starting…",
+        stoppingKey: "Kimi Code is stopping…",
+        failedKey: "Kimi Code failed",
+        probePath: "api/v1/meta",
+        probeStyle: .jsonAPI,
+        tokenLinkLogPath: nil
+    )
+
+    static let deepseek = LocalServerSpec(
+        label: "com.deepseek.server",
+        port: 58628,
+        titleKey: "DeepSeek Harness",
+        startKey: "Start DeepSeek server",
+        stopKey: "Stop DeepSeek server and free its memory",
+        openKey: "Open DeepSeek web UI",
+        startingKey: "DeepSeek is starting…",
+        stoppingKey: "DeepSeek is stopping…",
+        failedKey: "DeepSeek failed",
+        probePath: "",
+        probeStyle: .anyResponse,
+        tokenLinkLogPath: "Library/Logs/deepseek-server.log"
+    )
+}
+
+internal final class LocalServer {
     internal enum Status: Equatable {
         /// No LaunchAgent on this machine — the control hides itself.
         case unavailable
@@ -29,9 +90,7 @@ internal final class KimiServer {
         var busy: Bool { self == .starting || self == .stopping }
     }
 
-    internal static let label = "com.kimi.server"
-    internal static let webURL = URL(string: "http://127.0.0.1:58627/")!
-
+    internal let spec: LocalServerSpec
     internal private(set) var status: Status = .stopped
     internal var onChange: ((Status) -> Void)?
 
@@ -42,11 +101,13 @@ internal final class KimiServer {
     private let plist: URL
     private let domain = "gui/\(getuid())"
     private let session: URLSession
-    private let queue = DispatchQueue(label: "eu.exelban.Stats.kimi-server", qos: .userInitiated)
+    private let queue: DispatchQueue
 
-    internal init() {
+    internal init(spec: LocalServerSpec) {
+        self.spec = spec
         let home = FileManager.default.homeDirectoryForCurrentUser
-        self.plist = home.appendingPathComponent("Library/LaunchAgents/\(KimiServer.label).plist")
+        self.plist = home.appendingPathComponent("Library/LaunchAgents/\(spec.label).plist")
+        self.queue = DispatchQueue(label: "eu.exelban.Stats.server.\(spec.label)", qos: .userInitiated)
 
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 1.5
@@ -98,7 +159,7 @@ internal final class KimiServer {
         self.openWhenReady = true
         self.publish(.starting)
         self.queue.async {
-            _ = self.launchctl(["enable", "\(self.domain)/\(KimiServer.label)"])
+            _ = self.launchctl(["enable", "\(self.domain)/\(self.spec.label)"])
             let (code, output) = self.launchctl(["bootstrap", self.domain, self.plist.path])
             // a bootstrap failure is not fatal on its own: the job may simply
             // have been loaded already, in which case the port probe succeeds
@@ -114,14 +175,31 @@ internal final class KimiServer {
             // `disable` must come with the unload: RunAtLoad would otherwise
             // resurrect the server at the next login, which is not what "off"
             // means to someone who just switched it off.
-            _ = self.launchctl(["disable", "\(self.domain)/\(KimiServer.label)"])
-            let (code, output) = self.launchctl(["bootout", "\(self.domain)/\(KimiServer.label)"])
+            _ = self.launchctl(["disable", "\(self.domain)/\(self.spec.label)"])
+            let (code, output) = self.launchctl(["bootout", "\(self.domain)/\(self.spec.label)"])
             self.settle(expectRunning: false, failure: output.isEmpty ? "launchctl bootout: exit \(code)" : output)
         }
     }
 
     internal func openWebUI() {
-        NSWorkspace.shared.open(KimiServer.webURL)
+        NSWorkspace.shared.open(self.webURLLink())
+    }
+
+    /// The URL worth opening: the newest token-carrying link from the launch
+    /// log when the server rotates tokens (the token survives in the browser
+    /// only as long as its query URL is used), the plain root otherwise.
+    private func webURLLink() -> URL {
+        guard let logPath = self.spec.tokenLinkLogPath else { return self.spec.baseURL }
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        guard let text = try? String(contentsOf: home.appendingPathComponent(logPath), encoding: .utf8) else {
+            return self.spec.baseURL
+        }
+        for line in text.split(separator: "\n").reversed() {
+            guard line.contains("token="), let start = line.range(of: "http://") else { continue }
+            let raw = line[start.lowerBound...].trimmingCharacters(in: .whitespaces)
+            if let url = URL(string: raw) { return url }
+        }
+        return self.spec.baseURL
     }
 
     // MARK: - probing
@@ -130,11 +208,23 @@ internal final class KimiServer {
     /// job as running a moment before the server actually accepts connections,
     /// and says nothing about a worker that failed to bind.
     private func probe(_ done: @escaping (Bool) -> Void) {
-        var request = URLRequest(url: KimiServer.webURL.appendingPathComponent("api/v1/meta"))
+        let url: URL = self.spec.probeStyle == .jsonAPI
+            ? self.spec.baseURL.appendingPathComponent(self.spec.probePath)
+            : self.spec.baseURL
+        var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.timeoutInterval = 1.5
         self.session.dataTask(with: request) { data, response, _ in
-            let running = (response as? HTTPURLResponse)?.statusCode == 200 && data != nil
+            let http = response as? HTTPURLResponse
+            let running: Bool
+            switch self.spec.probeStyle {
+            case .jsonAPI:
+                running = http?.statusCode == 200 && data != nil
+            case .anyResponse:
+                // a token fence answers 401 to an unauthenticated GET / —
+                // any answered status still proves the port serves
+                running = http != nil
+            }
             DispatchQueue.main.async { done(running) }
         }.resume()
     }
@@ -151,7 +241,7 @@ internal final class KimiServer {
                 }
                 return
             }
-            guard attempt < 33 else { // ≈10 s, long enough for a cold start
+            guard attempt < 66 else { // ≈20 s, enough for either server's cold start
                 self.openWhenReady = false
                 self.publish(.failed(failure))
                 return
@@ -183,21 +273,24 @@ internal final class KimiServer {
     }
 }
 
-internal final class KimiServerControl: NSStackView {
-    private let server = KimiServer()
+internal final class LocalServerControl: NSStackView {
+    private let spec: LocalServerSpec
+    private let server: LocalServer
     private let title = NSButton()
     private let power = NSButton()
     private let open = NSButton()
     private let spinner = NSProgressIndicator()
 
-    internal init() {
+    internal init(spec: LocalServerSpec) {
+        self.spec = spec
+        self.server = LocalServer(spec: spec)
         super.init(frame: .zero)
 
         self.orientation = .horizontal
         self.alignment = .centerY
         self.spacing = 5
 
-        self.title.title = localizedString("Kimi Code")
+        self.title.title = localizedString(spec.titleKey)
         self.title.isBordered = false
         self.title.focusRingType = .none
         self.title.font = Design.labelFont
@@ -218,8 +311,8 @@ internal final class KimiServerControl: NSStackView {
         self.open.isBordered = false
         self.open.focusRingType = .none
         self.open.contentTintColor = Design.mutedTextColor
-        self.open.toolTip = localizedString("Open Kimi web UI")
-        self.open.setAccessibilityLabel(localizedString("Open Kimi web UI"))
+        self.open.toolTip = localizedString(spec.openKey)
+        self.open.setAccessibilityLabel(localizedString(spec.openKey))
         self.open.target = self
         self.open.action = #selector(self.openWeb)
 
@@ -288,15 +381,15 @@ internal final class KimiServerControl: NSStackView {
         case .unavailable:
             return
         case .stopped:
-            tip = localizedString("Start Kimi Code server")
+            tip = localizedString(self.spec.startKey)
         case .starting:
-            tip = localizedString("Kimi Code is starting…")
+            tip = localizedString(self.spec.startingKey)
         case .running:
-            tip = localizedString("Stop Kimi Code server and free its memory")
+            tip = localizedString(self.spec.stopKey)
         case .stopping:
-            tip = localizedString("Kimi Code is stopping…")
+            tip = localizedString(self.spec.stoppingKey)
         case .failed(let detail):
-            tip = "\(localizedString("Kimi Code failed")): \(detail)"
+            tip = "\(localizedString(self.spec.failedKey)): \(detail)"
         }
         self.title.toolTip = tip
         self.power.toolTip = tip

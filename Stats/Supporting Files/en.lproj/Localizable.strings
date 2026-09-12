@@ -648,3 +648,11 @@
 "Kimi Code is starting…" = "Kimi Code server is starting…";
 "Kimi Code is stopping…" = "Kimi Code server is quitting…";
 "Kimi Code failed" = "Kimi Code: the switch failed";
+
+"DeepSeek Harness" = "DeepSeek Harness";
+"Start DeepSeek server" = "Start the DeepSeek Harness server";
+"Stop DeepSeek server and free its memory" = "Quit the DeepSeek Harness server and free its memory";
+"Open DeepSeek web UI" = "Open the DeepSeek web UI";
+"DeepSeek is starting…" = "DeepSeek Harness is starting…";
+"DeepSeek is stopping…" = "DeepSeek Harness is stopping…";
+"DeepSeek failed" = "DeepSeek Harness: the switch failed";
